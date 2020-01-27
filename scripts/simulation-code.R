@@ -1,0 +1,211 @@
+rm(list=ls())
+library(mice)
+library(VIM)
+library(lattice)
+library(ggplot2)
+library(EpiEstim)
+library(dplyr)
+
+#dat_raw <- fread('data/ncovdata.csv', col.names = c("time", "date", "cum.cases", "cum.cases.intl"))
+#dat_raw = data.table(dat_raw)
+
+setwd("/Users/abmlab/OneDrive/Documents/postdoc projects/2019-ncov/")
+dat_est <- fread('data/estimated_incidence_ur80.dat')
+dat_est = data.table(dat_est)
+
+# time index matching table
+tdf = data.table(tidx = dat_est$time, tstr = dat_est$dates)
+fwrite("time-mapping.csv", x = tdf)
+
+# remove NA 
+dat_est = dat_est[-which(is.na(dat_est$cv)), ]
+
+# convert the time column to the dates column 
+# dat_est$time = factor(dat_est$dates, levels = dat_est$dates) ## will keep the factor order
+
+
+#### simulate binomial
+#' Simulate NegBinomial-distributed incidence 
+#' with mean the reported daily incidence.
+sim_inc_nbinom <- function(seed, dati) {
+  set.seed(seed)
+  mean.inc <- dati$cases
+  #szv <-  1/(cv.sim^2 - 1/mean.inc)
+  szv <- 1/(dati$cv^2 - 1/mean.inc)
+  
+  # For numerical stability:
+  szv[is.infinite(szv)] <- 1e2 
+  szv[szv <= 0]         <- 50
+  
+  # Checks:
+  if(0){
+    v <- mean.inc + mean.inc^2/szv
+    check.cv <- sqrt(v)/ mean.inc # should be close to input `cv.sim`
+  }
+  
+  # Simulate observation process:
+  sim.inc <- rnbinom(n  = nrow(dati), 
+                     mu = mean.inc, 
+                     size = szv)
+  
+  sim.inc[is.na(sim.inc)] <- 0
+  cuminc <- cumsum(sim.inc)
+  
+  # cv.sim.ts <- cv_window(t = dati$t, 
+  #                        y = sim.inc, 
+  #                        w = cv.window)
+  
+  # Checks:
+  if(0){
+    plot(dati$cv,typ='o')
+    abline(h=cv.sim, lty=2)
+    lines(cv.sim.ts, col='red')
+  }
+  
+  res <- cbind(dati, 
+               sim.inc = sim.inc, 
+               seed    = seed, 
+               #cv.sim  = c(rep(NA,cv.window+1),cv.sim.ts),
+               cuminc = cuminc)
+  return(res)
+}
+
+simulate_obsprocess <- function(n.mc,  dati) {
+  tmp.df <- lapply(1:n.mc, sim_inc_nbinom, 
+                   dati = dati)
+  dfsim  <- do.call('rbind', tmp.df)
+  return(dfsim)
+}
+
+# The fitted observation process:
+n.mc  <- 500
+dfsim <- simulate_obsprocess(n.mc, dat_est)
+
+dfsim.s <- dfsim %>%
+  group_by(time) %>%
+  summarise(m.cv = mean(cv),
+            min.cv = min(cv),
+            max.cv = max(cv))
+
+## plotting of cv
+# g <- dfsim.s %>%
+#   ggplot()+
+#   geom_line(aes(x=time, y=m.cv),alpha=0.7)+
+#   geom_ribbon(aes(x=time, ymin=min.cv, ymax=max.cv), alpha=0.2)+
+#   geom_point(data = dat_est, aes(x=time, y=cv))+
+#   ggtitle(paste('Coeff. of Variation of Daily Incidence. CV window =',cv.window), 
+#           subtitle = 'Points = data')
+# plot(g)
+
+# Check how the fit looks:
+g.inc1 <- dfsim %>%
+  filter(seed <=9) %>%
+  ggplot() + 
+  geom_line(aes(x=time, y=sim.inc, group=1),alpha=0.8) + 
+  geom_point(data = dat_est, aes(x=time, y=cases, colour="black"), 
+             shape=16, alpha=0.6)+
+  facet_wrap(~seed, ncol=3)+
+  ggtitle('Examples of simulated daily incidence')
+plot(g.inc1)
+
+
+# plot all of them
+dfsim_summ <- dfsim %>%
+  group_by(time) %>%
+  summarise(m = mean(sim.inc, na.rm=T),
+            md = median(sim.inc, na.rm=T),
+            qlo = quantile(sim.inc, probs = 0.025, na.rm=T),
+            qhi = quantile(sim.inc, probs = 0.975, na.rm=T))
+
+g.inc2 <- dfsim_summ %>% ggplot() +
+  geom_line(aes(x=time, y=m, group=1))+
+  geom_ribbon(aes(x=as.numeric(time), ymin=qlo, ymax=qhi), alpha=.2)+
+  geom_point(data = dat_est, aes(x=time, y=cases, colour="red"), 
+             shape=16,  alpha=0.8)
+
+plot(g.inc2)
+                
+
+
+# Cumulative incidence
+df.cuminc <- dfsim %>%
+  group_by(seed) %>%
+  summarize(final.size=max(cuminc))
+
+g.finalsize <- df.cuminc %>%
+  ggplot()+
+  geom_histogram(aes(x=final.size), bins=10)
+plot(g.finalsize)
+
+# Sliding window size (in days) to estimate R_eff:
+r.estim.window <- 8
+z <- list()
+for (i in unique(dfsim$seed)){  #i=1
+  # print(i)
+  dfi <- dfsim %>% 
+    filter(seed == i ) %>%
+    select(time, sim.inc)
+  
+  # Incidence start with several days at 0
+  # in simulations, so remove them in order
+  # not to break `estimate_R`:
+  idx.pos <- dfi$sim.inc>0
+  idx.pos[is.na(idx.pos)] <- FALSE
+  t.not.0 <- which(idx.pos)[1]
+  idx.pos[t.not.0:length(idx.pos)] <- TRUE
+  dfi     <- dfi[idx.pos,]
+  
+  t_start <- 2:(nrow(dfi)-r.estim.window)  
+  t_end   <- t_start + r.estim.window
+  
+  R.psi <- estimate_R(incid = dfi$sim.inc, 
+                      method="uncertain",
+                      config = make_config(list(t_start = t_start, 
+                                                t_end   = t_end,
+                                                mean_si = 8, std_mean_si = 1,
+                                                min_mean_si = 6, max_mean_si = 12,
+                                                std_si = 4, std_std_si = 1,
+                                                min_std_si = 2, max_std_si = 6,
+                                                n1 = 20, n2 = 20)))
+  
+  # plot(R.psi)
+  tmp    <- R.psi$R
+  tmp$mc <- i
+  # encode the correct time from the data table
+  tmp$t  <- dfi$time[2:tail(t_start, n=1)] #t.not.0 -1 + tmp$t_start
+  z[[i]] <- tmp
+}
+
+
+df.R <- do.call('rbind',z)
+df.R.s <- df.R %>%
+  dplyr::rename(R = `Mean(R)`) %>%
+  dplyr::rename(R.lo = `Quantile.0.025(R)`) %>%
+  dplyr::rename(R.hi = `Quantile.0.975(R)`) %>%
+  group_by(t) %>%
+  summarize(R.mean = mean(R, na.rm = TRUE),
+            R.lo   = mean(R.lo, na.rm = TRUE),
+            R.hi   = mean(R.hi, na.rm = TRUE))
+
+g.R <- df.R.s %>%
+  ggplot(aes())+
+  geom_line(aes(x=t, y=R.mean, group=1), size=1)+
+  geom_ribbon(aes(x=as.numeric(t), ymin=R.lo, ymax=R.hi), alpha=0.2)+
+  geom_hline(yintercept = 1, linetype='dotted')+
+  ggtitle('Estimate of the Effective Reproduction Number',
+          subtitle = paste('Mean and 95CI. Sliding window =',r.estim.window))
+plot(g.R)
+
+## save R values for seyed 
+
+aa = data.table(mc = df.R$mc, time = df.R$t, rval = df.R[, names(df.R)[3]])
+aa_dcast = dcast(data = aa, formula = mc~time, value.var = 'rval')
+#min(aa$time)
+names(aa_dcast) = c("mc", tdf$tstr[min(aa$time):max(aa$time)])
+
+
+## save the data for seyed.
+fwrite("ur80_incidence.csv", x = dfsim_summ)  
+fwrite("ur80_finalsize.csv", x =data.table(df.cuminc))
+fwrite("ur80_rvalues.csv", x = aa_dcast )
+fwrite("ur80_rvalues_summary.csv", x = df.R.s)

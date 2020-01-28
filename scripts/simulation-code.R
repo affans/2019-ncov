@@ -10,7 +10,8 @@ library(dplyr)
 #dat_raw = data.table(dat_raw)
 
 setwd("/Users/abmlab/OneDrive/Documents/postdoc projects/2019-ncov/")
-dat_est <- fread('data/estimated_incidence_ur80.dat')
+savstr = "ur80_jan22"
+dat_est <- fread('data/estimated_incidence_ur80_jan22.dat')
 dat_est = data.table(dat_est)
 
 # time index matching table
@@ -127,14 +128,26 @@ plot(g.inc2)
                 
 
 
-# Cumulative incidence
-df.cuminc <- dfsim %>%
+# Cumulative incidence ON JANUARY 29, timeindex = 60
+jan29.cuminc <- dfsim %>%
+  filter(time <= 60) %>%
   group_by(seed) %>%
-  summarize(final.size=max(cuminc))
+  summarize(final.size.jan29=max(cuminc))
 
-g.finalsize <- df.cuminc %>%
+feb10.cuminc <- dfsim %>%
+  group_by(seed) %>%
+  summarize(final.size.feb10=max(cuminc))
+
+df.cuminc = data.table(cbind(jan29.cuminc, feb10.cuminc))
+df.cuminc[, c(3) := NULL]
+
+df.cuminc.m = melt(data = df.cuminc, id.vars = "seed", measure.vars = c('final.size.jan29', 'final.size.feb10'))
+
+g.finalsize <- df.cuminc.m %>%
   ggplot()+
-  geom_histogram(aes(x=final.size), bins=10)
+  geom_histogram(aes(x=value), bins=10) + 
+  facet_wrap(~variable, ncol=2,  scales = "free_x") +
+  labs(title="Final size Jan29 and Feb growth")
 plot(g.finalsize)
 
 # Sliding window size (in days) to estimate R_eff:
@@ -205,7 +218,7 @@ names(aa_dcast) = c("mc", tdf$tstr[min(aa$time):max(aa$time)])
 
 
 ## save the data for seyed.
-fwrite("ur80_incidence.csv", x = dfsim_summ)  
-fwrite("ur80_finalsize.csv", x =data.table(df.cuminc))
-fwrite("ur80_rvalues.csv", x = aa_dcast )
-fwrite("ur80_rvalues_summary.csv", x = df.R.s)
+fwrite(paste0(savstr, "_incidence.csv"), x = dfsim_summ)  
+fwrite(paste0(savstr, "_finalsize.csv"), x =data.table(df.cuminc))
+fwrite(paste0(savstr, "_rvalues.csv"), x = aa_dcast )
+fwrite(paste0(savstr, "_rvalues_summary.csv"), x = df.R.s)

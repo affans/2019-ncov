@@ -1,3 +1,11 @@
+## contact analysis 2019-nCov 
+## Affan Shoukat, Feb 2020
+
+## this script uses the EpiEstim R package to calculate temporal R0 values. 
+## As input, it requires fitted incidence data from either analysis_one or analysis_two file. 
+## It will first use the fitted incidence data to simulate epidemics using negative-binomial distributions.
+## It will take each epidemic curve and feed that in the R package. 
+
 rm(list=ls())
 library(mice)
 library(VIM)
@@ -6,17 +14,10 @@ library(ggplot2)
 library(EpiEstim)
 library(dplyr)
 
-#dat_raw <- fread('data/ncovdata.csv', col.names = c("time", "date", "cum.cases", "cum.cases.intl"))
-#dat_raw = data.table(dat_raw)
-
 setwd("/Users/abmlab/OneDrive/Documents/postdoc projects/2019-ncov/")
-savstr = "ur80_jan22"
-dat_est <- fread('data/estimated_incidence_ur80_jan22.dat')
+savstr = "baseline"
+dat_est <- fread('data/estimated_incidence_baseline.dat')
 dat_est = data.table(dat_est)
-
-# time index matching table
-tdf = data.table(tidx = dat_est$time, tstr = dat_est$dates)
-fwrite("time-mapping.csv", x = tdf)
 
 # remove NA 
 dat_est = dat_est[-which(is.na(dat_est$cv)), ]
@@ -151,7 +152,7 @@ g.finalsize <- df.cuminc.m %>%
 plot(g.finalsize)
 
 # Sliding window size (in days) to estimate R_eff:
-r.estim.window <- 8
+r.estim.window <- 7
 z <- list()
 for (i in unique(dfsim$seed)){  #i=1
   # print(i)
@@ -175,10 +176,10 @@ for (i in unique(dfsim$seed)){  #i=1
                       method="uncertain",
                       config = make_config(list(t_start = t_start, 
                                                 t_end   = t_end,
-                                                mean_si = 8, std_mean_si = 1,
+                                                mean_si = 7.5, std_mean_si = 0.5,
                                                 min_mean_si = 6, max_mean_si = 12,
-                                                std_si = 4, std_std_si = 1,
-                                                min_std_si = 2, max_std_si = 6,
+                                                std_si = 3.5, std_std_si = 0.5,
+                                                min_std_si = 2, max_std_si = 5,
                                                 n1 = 20, n2 = 20)))
   
   # plot(R.psi)
@@ -214,11 +215,15 @@ plot(g.R)
 aa = data.table(mc = df.R$mc, time = df.R$t, rval = df.R[, names(df.R)[3]])
 aa_dcast = dcast(data = aa, formula = mc~time, value.var = 'rval')
 #min(aa$time)
-names(aa_dcast) = c("mc", tdf$tstr[min(aa$time):max(aa$time)])
+
+# time index matching table
+# tdf = data.table(tidx = dat_est$time, tstr = dat_est$date)
+# fwrite("time-mapping.csv", x = tdf)
+# names(aa_dcast) = c("mc", tdf$tstr[min(aa$time):max(aa$time)])
 
 
 ## save the data for seyed.
 fwrite(paste0(savstr, "_incidence.csv"), x = dfsim_summ)  
-fwrite(paste0(savstr, "_finalsize.csv"), x =data.table(df.cuminc))
+#fwrite(paste0(savstr, "_finalsize.csv"), x =data.table(df.cuminc))
 fwrite(paste0(savstr, "_rvalues.csv"), x = aa_dcast )
 fwrite(paste0(savstr, "_rvalues_summary.csv"), x = df.R.s)

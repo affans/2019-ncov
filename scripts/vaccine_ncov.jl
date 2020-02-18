@@ -3,105 +3,124 @@
 
 using DifferentialEquations, Plots, Parameters, DataFrames, CSV, LinearAlgebra
 
-## original model (with no age structure)
-## not neccessary anymore
-@with_kw mutable struct Model1_Parameters
-    β::Float64   = 0.0
-    M::Float64   = 0.0    
-    ξ::Float64   = 1/(10 - 4.6)
-    ν::Float64    = 0.0                    
-    σ::Float64    = 1/5.2                  ## incubation rate
-    τ::Float64    = 0.0                    ## contact tracing efficacy
-    q::Float64    = 0.0                    ## weight for symptomatic cases being quarantined  (calculated!)
-    h::Float64    = 0.0                    ## weight for symptomatic cases being hospitalized (calculated!)
-    γ::Float64    = 1/(2*(7.5 - 5.2))      ## rate of symptom onset to recovery
-    ω::Float64    = 1/4.6                  ## rate of symptom onset to self-quarantine
-    δ::Float64    = 1/10                   ## rate of symptom onset to hospitalization
-    hq::Float64   = 0.0                    ## weight for quarantine to recovery (calculated!)
-    ρ::Float64    = 1/14                   ## rate of quarantine to recovery 
-    ζ::Float64    = 0.0                    ## rate of quarantine to hospitalization
-    m::Float64    = 0.0                    ## weight for mortality in hospital for unvaccinated (calculated!)
-    μ::Float64    = 1/(23 - 10)            ## rate of hospitalization to death
-    ψ::Float64    = 1/10                   ## rate of hospitalization to recovery
-    ϵ::Float64    = 0.0                    ## vaccine efficacy (AGE DEPENDENT)
-    qbar::Float64  = 0.0                   ## weight for symptomatic (vaccinated) cases being quarantined  (calculated!)
-    hbar::Float64  = 0.0                   ## weight for symptomatic (vaccinated) cases being hospitalized (calculated!)
-    hqbar::Float64 = 0.0                   ## weight for quarantine (vaccinated) to recovery (calculated!) 
-    mbar::Float64  = 0.0                   ## weight for mortality (vaccinated) in hospital for unvaccinated (calculated!)  
-    pm::Float64    = 6/47                  ## intermediate value to calculate m 
-    ph::Float64    = 0.05                  ## intermediate value to calculate h 
-    pq::Float64    = 0.14                  ## intermediate value to calculate q 
-    phq::Float64   = 0.26                   ## intermediate value to calculate hq
+@with_kw mutable struct ModelParameters
+    β::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## transmission       
+    ν::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## vaccination rate
+    σ::Float64 = 0.0 ## incubation period
+    τ::Float64 = 0.0 ## contact tracing parameter
+    ϵ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## age specific vaccine efficacy
+    q::Float64 = 0.0 ## ???
+    h::Float64 = 0.0 ## ???
+    c::Float64 = 0.0 ## ???
+    γ::Float64 = 0.0 ## ???
+    δ::Float64 = 0.0 ## ???
+    θ::Float64 = 0.0 ## ???
+    μ::Float64 = 0.0 ## ??
+    ω::Float64 = 0.0  ## ?
+    mh::Float64 = 0.0 ## ??
+    μh::Float64 = 0.0 ## ??
+    ϕh::Float64 = 0.0 ## ??
+    mc::Float64 = 0.0 ## ??
+    μc::Float64 = 0.0 ## ??
+    ϕc::Float64 = 0.0 ## ??
 end
 
-function m_weight(par::Model1_Parameters)
-    @unpack ψ, pm, μ = par
-    val = (pm*ψ)/(pm*ψ + (1 - ψ)μ)
-    par.m = val     
-end 
-
-function hq_weight(par::Model1_Parameters)
-    @unpack ph, pq, phq, ω, γ, δ, ζ, ρ = par
-    hval = (ph*ω*γ)/(δ*((1 - pq)*ω + pq*γ) + ph*ω*(γ - δ))
-    qval = (pq*(hval*δ + (1 - hval)*γ))/((1 - pq)*ω + pq*γ)
-    hqval = (phq*ρ)/(phq*ρ + (1 - phq)*ζ)
-    par.h = hval
-    par.q = qval
-    par.hq = hqval
+function contact_matrix()
+    ## contact matrix will go in here
+    M = ones(Int64, 4, 4)
+    Mbar = ones(Int64, 4, 4)
+    return M, Mbar
 end
 
-function model1_setup_parameters() 
-    p = Model1_Parameters()
-    
-    # set beta  
-    p.β = 0.001 
-    p.M = 0.1111  #try 3.43e-7
+function Model!(du, u, p, t)
+    # simplified model v2, with age structure
+    # 4 age groups: 0 - 18, 19 - 49, 50 - 65, 65+
+    S₁, S₂, S₃, S₄, 
+    E₁, E₂, E₃, E₄, 
+    V₁, V₂, V₃, V₄, 
+    F₁, F₂, F₃, F₄, 
+    I₁, I₂, I₃, I₄, 
+    O₁, O₂, O₃, O₄, 
+    Q₁, Q₂, Q₃, Q₄, 
+    H₁, H₂, H₃, H₄, 
+    C₁, C₂, C₃, C₄, Dᵥ = u
 
-    ## setup m, h, q, hq weights
-    m_weight(p); hq_weight(p); 
-    
-    ## set the vaccinated rates to be the same for now
-    p.qbar = p.q 
-    p.hbar = p.h 
-    p.hqbar = p.hq 
-    p.mbar = p.m
+    # set up the vectors for syntactic sugar 
+    S = (S₁, S₂, S₃, S₄)
+    E = (E₁, E₂, E₃, E₄)
+    V = (V₁, V₂, V₃, V₄)
+    F = (F₁, F₂, F₃, F₄)
+    I = (I₁, I₂, I₃, I₄)
+    O = (O₁, O₂, O₃, O₄)
+    Q = (Q₁, Q₂, Q₃, Q₄)
+    H = (H₁, H₂, H₃, H₄)
+    C = (C₁, C₂, C₃, C₄)
 
-    ## temporary set rates 
-    p.ν = 0.05
-    p.ζ = 0.01
-    p.ϵ = 0.5
+    println("S: $(typeof(S)), S1 = $(typeof(S₁))")
+#    error("errored out")
+
+    #get the contact matrix 
+    M, Mbar = contact_matrix()
     
-    # check for 0 entries    
-    for x in propertynames(p)
-        getproperty(p, x) == 0 && println("$x is set to zero")
+    # contants 
+    Nᵥ = 1e9
+    Bh = 10000
+    Bc = 10000
+    
+    #unpack the parameters 
+    @unpack β, ν, σ, τ, ϵ, q, h, c, γ, δ, θ, μ, ω, mh, μh, ϕh, mc, μc, ϕc  = p
+    for a = 1:4
+        #susceptble S₁, S₂, S₃, S₄ 
+        du[a]    = -β[a]*S[a]*(dot(M[a, :], I) + dot(Mbar[a, :], Q)) - ν[a]*S[a]*(1 - Dᵥ/Nᵥ)
+        #exposed E
+        du[a+4]  = β[a]*S[a]*(dot(M[a, :], I) + dot(Mbar[a, :], Q)) - σ*E[a] - τ*E[a]*(dot(M[a, :], (Q.+H.+C))) - ν[a]*E[a]*(1 - Dᵥ/Nᵥ)
+        #vaccinated V
+        du[a+8]  = -β[a]*(1 - ϵ[a])*V[a]*(dot(M[a, :], I) + dot(Mbar[a, :], Q)) + ν[a]*S[a]*(1 - Dᵥ/Nᵥ)
+        #vaccinated, but exposed F
+        du[a+12] = β[a]*(1 - ϵ[a])*V[a]*(dot(M[a, :], I) + dot(Mbar[a, :], Q)) - σ*F[a] - τ*E[a]*(dot(M[a, :], (Q.+H.+C))) + ν[a]*E[a]*(1 - Dᵥ/Nᵥ)
+        #infected class I
+        du[a+16] = (1 - q)*σ*(E[a] + F[a]) - 
+                        (1 - h*(1 - (H[1]+H[2]+H[3]+H[4])/Bh) - c*(1 - (C[1]+C[2]+C[3]+C[4])/Bc))*γ*I[a] - 
+                        h*(1 - (H[1]+H[2]+H[3]+H[4])/Bh)*δ*I[a] - 
+                        c*(1 - (C[1]+C[2]+C[3]+C[4])/Bc)*θ*I[a] - 
+                        τ*I[a]*(dot(M[a, :], (Q.+H.+C))) - 
+                        μ*I[a]*((H[1] + C[1] + H[2] + C[2] + H[3] + C[3] + H[4] + C[4])/(Bh + Bc))
+        #Oa class
+        du[a+20] = τ*(F[a] + E[a])*(dot(M[a, :], (Q.+H.+C))) - ω*O[a]
+        #infected but quarantined Q class
+        du[a+24] = q*σ*(E[a] + F[a]) + σ*O[a] + τ*I[a]*(dot(M[a, :], (Q.+H.+C))) -                        
+                        h*(1 - (H[1]+H[2]+H[3]+H[4])/Bh)*δ*Q[a] - 
+                        c*(1 - (C[1]+C[2]+C[3]+C[4])/Bc)*θ*Q[a] - 
+                        (1 - h*(1 - (H[1]+H[2]+H[3]+H[4])/Bh) - c*(1 - (C[1]+C[2]+C[3]+C[4])/Bc))*γ*Q[a] - 
+                        μ*Q[a]*((H[1] + C[1] + H[2] + C[2] + H[3] + C[3] + H[4] + C[4])/(Bh + Bc))
+        #hospitalized H class
+        du[a+28] = h*δ*(1 - (H[1]+H[2]+H[3]+H[4])/Bh)*(I[a] + Q[a]) - (mh*μh + (1 - mh)*ϕh)*H[a]
+        #C class 
+        du[a+32] = c*θ*(1 - (C[1]+C[2]+C[3]+C[4])/Bc)*(I[a] + Q[a]) - (mc*μc + (1 - mc)*ϕc)*C[a] 
     end
-
-    return p
+    du[37] = ν[1]*(1 - Dᵥ/Nᵥ)*(S[1] + E[1]) + 
+             ν[2]*(1 - Dᵥ/Nᵥ)*(S[2] + E[2]) + 
+             ν[3]*(1 - Dᵥ/Nᵥ)*(S[3] + E[3]) +
+             ν[4]*(1 - Dᵥ/Nᵥ)*(S[4] + E[4]) 
 end
 
-function Model1!(du,u,p,t) 
-    Nv = 1e9
-    S,E,F,I,O,Q,G,H,V, Ev,Iv,Ov,Qv,Gv,Hv,Dv = u
-    @unpack β, M, ξ, ν, σ, τ, q, h, γ, ω, δ, hq, ρ, ζ, m, μ, ψ, ϵ, qbar, hbar, hqbar, mbar = p
+function main()
+    tspan = (0.0,100.0)
+    u0 = zeros(Float64, 37) ## 37 compartments
+    u0[1] = 10000
+    p = ModelParameters()
+    prob = ODEProblem(Model!, u0, tspan, p)
+    sol = solve(prob)
+    #plot(sol)
+    return sol
+end
 
-    du[1] = dS = -β*S*M*(I+(1 - ξ)*Iv) - ν*S*(1 - Dv/Nv)
-    du[2] = dE = β*S*M*(I+(1 - ξ)*Iv) - σ*E - τ*E*(M*(H+Hv+Q+Qv)) - ν*E*(1 - Dv/Nv)
-    du[3] = dF = -σ*F - τ*F*(M*(H+Hv+Q+Qv)) + ν*E*(1 - Dv/Nv)
-    du[4] = dI = σ*(E + F) - (1 - q - h)*γ*I - q*ω*I - h*δ*I - τ*I*(M*(H+Hv+Q+Qv))
-    du[5] = dO = τ*(F + E)*(M*(H+Hv+Q+Qv)) - σ*O
-    du[6] = dQ = q*ω*I + σ*O - (1 - hq)*ρ*Q - hq*ζ*Q + τ*I*(M*(H+Hv+Q+Qv))
-    du[7] = dG = hq*ζ*Q - m*μ*G - (1 - m)*ψ*G
-    du[8] = dH = h*δ*I - m*μ*H - (1 - m)*ψ*H
+function _testparameters(p::ModelParameters) 
+    error("not implemented")    
+end
 
-    du[9] = dV = ν*S*(1 - Dv/Nv) - β*(1 - ϵ)*V*M*(I+(1 - ξ)*Iv)
-    
-    du[10] = dEv = β*(1-ϵ)*V*M*(I+(1 - ξ)*Iv) - σ*Ev - τ*Ev*(M*(H+Hv+Q+Qv)) 
-    du[11] = dIv = σ*Ev - (1 - qbar - hbar)*γ*Iv - qbar*ω*Iv - hbar*δ*Iv - τ*Iv*(M*(H+Hv+Q+Qv))
-    du[12] = dOv = τ*Ev*(M*(H+Hv+Q+Qv)) - σ*Ov
-    du[13] = dQv = qbar*ω*Iv + σ*Ov - (1 - hqbar)*ρ*Qv - hqbar*ζ*Qv + τ*Iv*(M*(H+Hv+Q+Qv))
-    du[14] = dGv = hqbar*ζ*Qv - mbar*μ*Gv - (1 - mbar)*ψ*Gv
-    du[15] = dHv = hbar*δ*Iv - mbar*μ*Hv - (1 - mbar)*ψ*Hv
-    du[16] = (1 - Dv/Nv)*(μ*S + μ*E)
+function _summary(p::ModelParameters)
+    error("not implemented")
 end
 
 function run_model1()

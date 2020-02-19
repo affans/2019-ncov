@@ -4,26 +4,26 @@
 using DifferentialEquations, Plots, Parameters, DataFrames, CSV, LinearAlgebra
 
 @with_kw mutable struct ModelParameters
-    β::Float64 = 0.0 ## transmission   
-    ξ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## vaccination rate
-    ν::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## vaccination rate
-    σ::Float64 = 0.0 ## incubation period
-    q::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
-    γ::Float64 = 0.0
-    τ::Float64 = 0.0
-    h::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
-    c::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
-    δ::Float64 = 0.0
-    θ::Float64 = 0.0
-    μ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
-    ω::Float64  = 0.0
-    mH::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
-    μH::Float64 = 0.0
-    ϕH::Float64 = 0.0
-    mC::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
-    μC::Float64 = 0.0
-    ϕC::Float64 = 0.0
-    ϵ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## vaccine efficacy
+    β::Float64 = 0.0 ## transmission to be calibrated
+    ξ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## reduction in transmission due to meeting vaccinated individual
+    ν::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) # vaccination rate 
+    σ::Float64 = 0.1923076923 # incubation period, 5.2 days average, real: gamma distributed. 
+    q::NTuple{4, Float64} = (0.41, 0.41, 0.41, 0.41) # proportion of self-quarantine
+    γ::Float64 = 0.2173913043  # rate of symptom onset to recovery
+    τ::Float64 = 0.0  # Early case finding rate
+    h::NTuple{4, Float64} = (0.009462204218, 0.0287817404, 0.1670760276, 0.4851364693) # Model weight for going to hospital
+    c::NTuple{4, Float64} = (0.003658999482, 0.01112979289, 0.06460768383, 0.1876004839) # Model weight for going to ICU
+    δ::Float64 = 0.1428571429 # rate of symptom onset to hospitalization
+    θ::Float64 = 0.125 # Rate from onset to ICU
+    μ::NTuple{4, Float64} = (0.0002255096518, 0.0006942592474, 0.004412973677, 0.01639611258) ## age dependent death rate, General Pop
+    ω::Float64  = 1.0   # Proportion of deaths in ICU relative to hosptial and ICU
+    mH::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ##  Model weight for hospital death
+    μH::Float64 = 0.111 # Hosptial admission to death
+    ϕH::Float64 = 0.1 # ICU admission to death   
+    mC::NTuple{4, Float64} = (0.3950958655, 0.3950958655, 0.3950958655, 0.3950958655) ## Model weight for ICU death
+    μC::Float64 = 0.111
+    ϕC::Float64 = 0.1
+    ϵ::NTuple{4, Float64} = (0.5, 0.5, 0.5, 0.5) ## vaccine efficacy, why is this age dependent?
     ## vaccination parameters
     q̃::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
     h̃::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) ## 
@@ -34,8 +34,17 @@ end
 
 function contact_matrix()
     ## contact matrix will go in here
-    M = ones(Int64, 4, 4)
-    Mbar = ones(Int64, 4, 4)
+    M = ones(Float64, 4, 4)
+    M[1, :] = [9.786719237, 3.774315965, 1.507919769, 0.603940171]
+    M[2, :] = [3.774315965, 9.442271327, 3.044332992, 0.702042998]
+    M[3, :] = [1.507919769, 3.044332992, 2.946427003, 0.760366544]
+    M[4, :] = [0.603940171, 0.702042998, 0.760366544, 1.247911075]
+    Mbar = ones(Float64, 4, 4)
+    Mbar[1, :] = [2.039302567, 1.565307565, 0.5035389324, 0.3809355428]
+    Mbar[2, :] = [1.565307565, 1.509696249, 0.444748829, 0.2389607652]
+    Mbar[3, :] = [0.5035389324, 0.444748829, 1.03553314, 0.1908134302]
+    Mbar[4, :] = [0.3809355428, 0.2389607652, 0.1908134302, 0.6410794914]
+
     return M, Mbar
 end
 
@@ -81,8 +90,8 @@ function Model!(du, u, p, t)
     
     # contants 
     Nᵥ = 1e9
-    Bh = 10000
-    Bc = 10000
+    Bh = 33955
+    Bc = 5666
     
     #unpack the parameters 
     @unpack β, ξ, ν, σ, q, γ, τ, h, c, δ, θ, μ, ω, mH, μH, ϕH, mC, μC, ϕC, ϵ, q̃, h̃, c̃, μₜ = p
@@ -150,8 +159,14 @@ end
 function main()
     tspan = (0.0,100.0)
     u0 = zeros(Float64, 50) ## 50 compartments
-    u0[1] = 10000
+    u0[1] = 163000000
+    u0[5] = 10
+    u0[45] = 42000000 ## N[1] N[2] N[3] N[4]
+    u0[46] = 66000000
+    u0[47] = 39000000
+    u0[48] = 16000000
     p = ModelParameters()
+    p.β = 1.0
     prob = ODEProblem(Model!, u0, tspan, p)
     sol = solve(prob)
     #plot(sol)

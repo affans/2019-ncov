@@ -4,6 +4,9 @@
 using DifferentialEquations, Plots, Parameters, DataFrames, CSV, LinearAlgebra
 using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles
 
+∑(x) = sum(x) # synctactic sugar
+heaviside(x) = x <= 0 ? 0 : 1
+
 @with_kw mutable struct ModelParameters
     # default parameter values, some are overwritten in the main function. 
     ## parameters for transmission dynamics. 
@@ -20,7 +23,7 @@ using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles
     ## vaccination specific parameters
     ν::NTuple{4, Float64} = (0.0044, 0.0044, 0.0044, 0.0044) # 0044: 2 million doses per week.
     ξ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) # reduction in transmission, use vaccine efficacy or 0.0 to be conservative
-    ϵ::NTuple{4, Float64} = (0.32, 0.48, 0.64, 0.64) # vaccine efficacy, frailty index per age group * 80% base efficacy
+    ϵ::NTuple{4, Float64} = (0.64, 0.64, 0.48, 0.32)# vaccine efficacy, frailty index per age group * 80% base efficacy
     
     ## transmission parameters for vaccinated
     q̃::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # fixed
@@ -38,7 +41,7 @@ using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles
 end
 
 function contact_matrix()
-    ## contact matrix will go in here
+    ## contact matrix for general population and in household. 
     M = ones(Float64, 4, 4)
     M[1, :] = [9.786719237, 3.774315965, 1.507919769, 0.603940171]
     M[2, :] = [3.774315965, 9.442271327, 3.044332992, 0.702042998]
@@ -49,12 +52,8 @@ function contact_matrix()
     Mbar[2, :] = [1.565307565, 1.509696249, 0.444748829, 0.2389607652]
     Mbar[3, :] = [0.5035389324, 0.444748829, 1.03553314, 0.1908134302]
     Mbar[4, :] = [0.3809355428, 0.2389607652, 0.1908134302, 0.6410794914]
-
     return M, Mbar
 end
-
-∑(x) = sum(x) # synctactic sugar
-heaviside(x) = x <= 0 ? 0 : 1
 
 function Model!(du, u, p, t)
     # model v4, with age structure, feb 20
@@ -75,7 +74,7 @@ function Model!(du, u, p, t)
     H₁, H₂, H₃, H₄, 
     C₁, C₂, C₃, C₄, 
     N₁, N₂, N₃, N₄,     
-    # internal incidence euqations
+    # internal incidence equations
     Z₁, Z₂, Z₃, Z₄,
     CX₁, CX₂, CX₃, CX₄,
     CY₁, CY₂, CY₃, CY₄,
@@ -113,10 +112,7 @@ function Model!(du, u, p, t)
     
     # constants 
     Nᵥ = 1e9
-    Bh = 33955  ## Bh, Bc not used in v4
-    Bc = 5666
     pop = (81982665,129596376,63157200,52431193)
-
 
     @unpack β, ξ, ν, σ, q, h, f, τ, γ, δ, ϵ, q̃, h̃, f̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
     for a = 1:4
@@ -140,12 +136,12 @@ function Model!(du, u, p, t)
         # Qh class 
         du[a+24] = q[a]*h[a]*σ*(E[a] + F[a]) - δ*Qₕ[a]
         # vaccine class V 
-        du[a+28] = -β*(1 - ϵ[a])*V[a]/pop[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
-                    β*(1 - ϵ[a])*V[a]/pop[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) +
+        du[a+28] = -β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
+                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) +
                     ν[a]*S[a]*heaviside(Nᵥ - Dᵥ)
         # Ẽ class
-        du[a+32] = β*(1 - ϵ[a])*V[a]/pop[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
-                   β*(1 - ϵ[a])*V[a]/pop[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
+        du[a+32] = β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
+                   β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
                    σ*Ẽ[a]
         # Ĩn class
         du[a+36] = (1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - f̃)*γ*Ĩₙ[a] - f̃*τ*Ĩₙ[a]
@@ -163,7 +159,6 @@ function Model!(du, u, p, t)
                     (mC*μC + (1 - mC)*ψC)*C[a]
         # Na class 
         du[a+60] = -mC*μC*C[a] - mH*μH*H[a]     
-
 
         # Z class to calculate incindece 
         du[a+64] =  β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
@@ -233,7 +228,7 @@ function sim_scenarios()
     p.β = 0.0037  ## 0.028: R0 ~ 2.0, next generation method
     # beta=0.37 --->R0=2.5, beta=0.44 ---> R0=3, beta=0.052 ---> R0=3.5
 
-    ν_rate = 0.0088  ## 
+    ν_rate = 0.0088  ## 0.0088: 4 million doses. 
     p.ν = (0.10*ν_rate, 0.10*ν_rate, 0.25*ν_rate, 0.55*ν_rate) # vaccination rate #10 10 25 55
 
     fs = (0.05, 0.1, 0.2)
@@ -366,6 +361,8 @@ function plots(sol)
     total_hosp_icu = hosp + icu
     ratio_symp_hosp = total_hosp_icu ./ totali
 
+    totalvac = sum([getclass(i, sol) for i = 29:32]) ## total vaccinated
+
     l = @layout [a b; c d; e f; g h]
     #p1 = plot(1:length(mean_inc), [prob, szv])
     p1 = plot(sol.t, s, label="susceptibles")
@@ -377,8 +374,13 @@ function plots(sol)
     p9 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])
     p4 = plot(sol.t, incidence, label="incidence")
 
-    p5 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
-    p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
+    #p5 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
+    #p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
+    
+    p5 = plot(sol.t, ẽ, label=["e vac"])
+    p6 = plot(sol.t, totalvac, label=["total vac #"])
+    
+    #p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
     #p7 = plot(sol.t, ratio_symp_hosp, legend=false)
    
     #Plots.scalefontsizes(0.1) #Or some other factor
@@ -407,7 +409,7 @@ function check_vaccine()
     p.β = 0.0  ## 0.028: R0 ~ 2.0, next generation method
     #ν_rate = 0.0044  ## nu = 0.0044 for 2 million doses on week 1. 
     #ν_rate = 0.0088  ## 
-    ν_rate = 0.0133  ## 
+    ν_rate = 0.0133  ## 0.0133 for 6 million
     p.ν = (0.10*ν_rate, 0.10*ν_rate, 0.25*ν_rate, 0.55*ν_rate) # vaccination rate #10 10 25 55
     sol = runsims(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
     tv = sum([getclass(i, sol) for i = 29:32]) ## total vaccinated

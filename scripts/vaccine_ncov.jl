@@ -81,7 +81,9 @@ function Model!(du, u, p, t)
     CY₁, CY₂, CY₃, CY₄,
     DX₁, DX₂, DX₃, DX₄,
     DY₁, DY₂, DY₃, DY₄,
-    Dᵥ, Wᵥ = u
+    ## vaccine compartments
+    D₁, D₂, D₃, D₄,
+    Wᵥ = u
     
     # set up the vectors for syntactic sugar 
     S = (S₁, S₂, S₃, S₄)
@@ -106,15 +108,17 @@ function Model!(du, u, p, t)
     CY = (CY₁, CY₂, CY₃, CY₄)
     DX = (DX₁, DX₂, DX₃, DX₄)
     DY = (DY₁, DY₂, DY₃, DY₄)
-    
+    # vaccine
+    Dᵥ = (D₁, D₂, D₃, D₄)
     
     #get the contact matrix 
     M, M̃ = contact_matrix()
     
     # constants 
-    Nᵥ = 150e6
+    #Nᵥ = (150e6)
     #nva::NTuple{4, Float64} = (0.10*Nᵥ, 0.10*Nᵥ, 0.25*Nᵥ, 0.55*Nᵥ)
-    pop = (81982665,129596376,63157200,52431193)
+    pop = (81982665,129596376,63157200,52431193) #8.0912e+07
+    Nᵥ = floor.( ((125e6-(0.3*pop[2]+0.7*pop[3]+0.7*pop[4]))/2, 0.3*pop[2], 0.70*pop[3], 0.70*pop[4]) )
 
     @unpack β, ξ, ν, σ, q, h, f, τ, γ, δ, ϵ, q̃, h̃, f̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
     for a = 1:4
@@ -122,13 +126,13 @@ function Model!(du, u, p, t)
         #println("$(dot(M[a, :], Iₙ))")
         du[a] = -β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) -        
-                    ν[a]*heaviside(Nᵥ - Dᵥ)  ## removed S[a]
+                    ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a])  
         # exposed E
         du[a+4]  = β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
-                    σ*E[a] - ν[a]*heaviside(Nᵥ - Dᵥ)*E[a]  ## removed E[a]
+                    σ*E[a] #- ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*E[a]  ##  RATE HERE IS A BIG PROBLEM!!!!
         #vaccinated, but exposed,  F
-        du[a+8] = -σ*F[a] + ν[a]*heaviside(Nᵥ - Dᵥ)*E[a]  ## removed E[a]
+        du[a+8] = -σ*F[a]*0 #+ ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*E[a]  
         # In class
         du[a+12] = (1 - q[a])*(1 - h[a])*σ*(E[a] + F[a]) - (1 - f)*γ*Iₙ[a] - f*τ*Iₙ[a]
         # Qn class
@@ -140,7 +144,7 @@ function Model!(du, u, p, t)
         # vaccine class V 
         du[a+28] = -β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
                     β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) +
-                    ν[a]*heaviside(Nᵥ - Dᵥ) ## removed S[a]
+                    ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a]) 
         # Ẽ class
         du[a+32] = β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
@@ -173,20 +177,25 @@ function Model!(du, u, p, t)
         du[a+72] = ((1 - mC)*ψC)*C[a]  ## CY
         du[a+76] = (mH*μH)*H[a]  ## DX
         du[a+80] = (mC*μC)*C[a]  ## DY
-                    
+
+        ## DV class
+        du[a+84] = ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a]) #+ ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*E[a]
     end
     #du[85] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(S[1] + E[1]) + ν[2]*(S[2] + E[2]) + ν[3]*(S[3] + E[3]) + ν[4]*(S[4] + E[4]))
-    du[85] = heaviside(Nᵥ - Dᵥ)*(1 + E[1]) + ν[2]*(1 + E[1]) + ν[3]*(1 + E[1]) + ν[4]*(1 + E[1])
-    du[86] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(E[1]) + ν[2]*(E[2]) + ν[3]*(E[3]) + ν[4]*(E[4]))
+    #du[85] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(1 + E[1]) + ν[2]*(1 + E[1]) + ν[3]*(1 + E[1]) + ν[4]*(1 + E[1])
+    #du[89] = ν[1]*heaviside(Nᵥ[1] - Dᵥ[1])*E[1] + ν[2]*heaviside(Nᵥ[2] - Dᵥ[2])*E[2] +
+    #            ν[3]*heaviside(Nᵥ[3] - Dᵥ[3])*E[3] + ν[4]*heaviside(Nᵥ[4] - Dᵥ[4])*E[4]
+    du[89] = σ*(F[1] + F[2] + F[3] + F[4])
 end
 
 ## ODE callback 
-condition(u,t,integrator) = t == 70.0
-isoutofdomain(u, t, integrator) = u[1] <= 0 || u[2] <= 0 || u[3] <= 0 || u[4] <= 0
+condition(u,t,integrator) = round(t; digits=1) == 70.0
+
 function vaccine!(integrator)
     nva = integrator.p.nva
-    integrator.p.ν = (0.1*nva/7, 0.1*nva/7, 0.25*nva/7, 0.55*nva/7) # vaccination rate #10 10 25 55            
+    integrator.p.ν = (0.1*nva, 0.1*nva, 0.25*nva, 0.55*nva)./7 # vaccination rate #10 10 25 55            
 end
+isoutofdomain(u, t, integrator) = u[1] <= 0 || u[2] <= 0 || u[3] <= 0 || u[4] <= 0
 function zerod!(integrator)
     for i = 1:4 
         if integrator.u[i] <= 0 
@@ -194,18 +203,17 @@ function zerod!(integrator)
         end
     end
 end
-cb = DiscreteCallback(condition,vaccine!)
-cb2= DiscreteCallback(isoutofdomain,zerod!)
-cbset = CallbackSet(cb, cb2)
+cb = DiscreteCallback(condition, vaccine!, save_positions=(false,false))
+#cb2= DiscreteCallback(isoutofdomain, zerod!, save_positions=(true,true))
+#cbset = CallbackSet(cb, cb2)
 
 function run_model(p::ModelParameters, nsims=1)
     ## set up ODE time and initial conditions
     tspan = (0.0, 500.0)
-    u0 = zeros(Float64, 86) ## total compartments
+    u0 = zeros(Float64, 89) ## total compartments
     sols = []    
     for mc = 1:nsims
         ## reset the initial conditions
-       
         u0[1] = u0[61] = 81982665
         u0[2] = u0[62] = 129596376
         u0[3] = u0[63] = 63157200
@@ -222,11 +230,11 @@ function run_model(p::ModelParameters, nsims=1)
         p.h̃ = @. (1 - p.ϵ) * p.h
         p.c̃ = @. (1 - p.ϵ) * p.c        
         
-
         ## solve the ODE model
         print("...sim: $mc, params: $(p.τ), $(p.f), $(p.nva), $(p.ν) \r")
         prob = ODEProblem(Model!, u0, tspan, p)
-        sol = solve(prob, Rodas4(autodiff=false), dt=1, adaptive=false, callback=cbset)  ## WORKS
+        sol = solve(prob, Rodas4(autodiff=false), dt=1.0, adaptive=false, callback=cb)  ## WORKS
+        #sol = solve(prob, Rosenbrock23(autodiff=false),  dt=0.1, adaptive=false, callback=cbset)  ## WORKS
         push!(sols, sol)     
     end
     println("\n simulation scenario finished")
@@ -237,11 +245,11 @@ function run_single()
     # A function that runs a single simulation for testing/calibrating purposes. 
     ## setup parameters (overwrite some default ones if needed)
     p = ModelParameters() 
-    p.nva = 5e6
-    p.β = 0.037  ## 0.028: R0 ~ 2.0, next generation method
-    p.τ = 0.5
-    p.f = 0.05
-    p.f̃ = 0.05
+    p.nva = 10e6 #70#10e6#5e6
+    p.β =  0.037  ## 0.028: R0 ~ 2.0, next generation method
+    p.τ = 1.0
+    p.f = 0.1
+    p.f̃ = 0.1
     sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
     return sol
 end
@@ -301,7 +309,7 @@ function savesims(sols, prefix="./")
     vars = (sus1, sus2, sus3, sus4, ci1, ci2, ci3, ci4,  cx1, cx2, cx3, cx4, cy1, cy2, cy3, cy4, dx1, dx2, dx3, dx4, dy1, dy2, dy3, dy4)
     fns = ("sus1", "sus2", "sus3", "sus4", "ci1", "ci2", "ci3", "ci4", "cx1", "cx2", "cx3", "cx4", "cy1", "cy2", "cy3", "cy4", "dx1", "dx2", "dx3", "dx4", "dy1", "dy2", "dy3", "dy4")
     fns = string.(prefix, "/", fns, ".csv") ## append the csv
-    writedlm.(fns, vars, ',')
+    #writedlm.(fns, vars, ',')
 
 end
 
@@ -343,10 +351,6 @@ function plots(sol)
     s = @. (s1 + s2 + s3 + s4)
     println("total number of susceptibles at start: $(s[1]), peak: $(maximum(s)),  end $(s[end])")
 
-    e1 = getclass(5, sol)
-    e2 = getclass(6, sol)
-    e3 = getclass(7, sol)
-    e4 = getclass(8, sol)
     e = sum([getclass(i, sol) for i = 5:8])
     ẽ = sum([getclass(i, sol) for i = 33:36])
     println("total number of exposed at start: $(e[1]), peak: $(maximum(e)),  end $(e[end])")
@@ -392,8 +396,8 @@ function plots(sol)
     totalvacV = sum([getclass(i, sol) for i = 29:32])  ## this is V class. 
     totalvacF = sum([getclass(i, sol) for i = 9:12])   ## F class
     totalvac=totalvacV+totalvacF
-    collectedvac = getclass(85, sol)
-    wastedvac = getclass(86, sol)
+    collectedvac = sum([getclass(i, sol) for i = 85:88]) 
+    wastedvac = getclass(89, sol)
 
     ## CHANGE in suspectibles, PER WEEK (used to calibrate the vaccine rate. not really needed anymore)
     sus = [getclass(i, sol) for i = 1:4]   ## susceptibles left
@@ -421,7 +425,7 @@ function plots(sol)
     p1 = plot(sol.t, s, label="susceptibles")
     p2 = plot(sol.t, zexp, label="c exp")
 
-    p3 = plot(sol.t, [e, ẽ], label=["exposed" "exposed (vaccinated)"])
+    p3 = plot(sol.t, [e, ẽ], label=["exposed E" "exposed F"])
     p4 = plot(sol.t, [iclass, qclass], label=["i class" "q class"])
 
     p5 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])

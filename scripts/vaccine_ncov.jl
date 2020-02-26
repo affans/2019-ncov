@@ -10,25 +10,26 @@ heaviside(x) = x <= 0 ? 0 : 1
 @with_kw mutable struct ModelParameters
     # default parameter values, some are overwritten in the main function. 
     ## parameters for transmission dynamics. 
-    β::Float64 = 0.037  ## 0.037: R0 ~ 2.5, next generation method
-    σ::Float64 = 1/5.2 # incubation period, 5.2 days average, sampled from LogNormal distributed. 
-    q::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # fixed proportion of self-quarantine
-    h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## sampled, default values mean of distribution 
-    f::Float64 = 0.05  ## default 5% self-isolation 
-    c::NTuple{4, Float64} = (0.0129, 0.03875, 0.203, 0.47)     ## sampled, default values mean of distribution     
-    τ::Float64 = 1.0   # symptom onset to isolation, default  average 1 day
-    γ::Float64 = 1/4.6 # symptom onset to recovery, assumed fixed, based on serial interval... sampling creates a problem negative numbers
-    δ::Float64 = 1/3.5 # sampled, default value mean of distribution
+    β::Float64 = 0.037 # (input) 0.037: R0 ~ 2.5, next generation method
+    σ::Float64 = 1/5.2 # (sampled)incubation period 5.2 days mean, LogNormal 
+    q::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # (fixed) proportion of self-quarantine
+    h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## (sampled), default values mean of distribution 
+    f::Float64 = 0.05  ## (input) default 5% self-isolation 
+    c::NTuple{4, Float64} = (0.0129, 0.03875, 0.203, 0.47) ## (sampled), default values mean of distribution     
+    τ::Float64 = 0.5   # (input) symptom onset to isolation, default  average 1 day
+    γ::Float64 = 1/4.6 # (fixed) symptom onset to recovery, assumed fixed, based on serial interval... sampling creates a problem negative numbers
+    δ::Float64 = 1/3.5 # (sampled), default value mean of distribution
 
     ## vaccination specific parameters
-    ν::NTuple{4, Float64} = (0.0044, 0.0044, 0.0044, 0.0044) # 0044: 2 million doses per week.
+    nva::Float64 = 0.0 ## vaccine doses limit. baseline 5e6 
+    ν::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) 
     ξ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) # reduction in transmission, use vaccine efficacy or 0.0 to be conservative
     ϵ::NTuple{4, Float64} = (0.64, 0.64, 0.48, 0.32)# vaccine efficacy, frailty index per age group * 80% base efficacy
     
     ## transmission parameters for vaccinated
     q̃::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # fixed
     h̃::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## sampled from h in sims
-    f̃::Float64 = 0.0 ## same as f
+    f̃::Float64 = 0.05 ## same as f
     c̃::NTuple{4, Float64} = (0.0129, 0.03875, 0.203, 0.47)  ## sampled from c in sims
 
     ## recovery and mortality
@@ -111,7 +112,8 @@ function Model!(du, u, p, t)
     M, M̃ = contact_matrix()
     
     # constants 
-    Nᵥ = 1e9
+    Nᵥ = 150e6
+    #nva::NTuple{4, Float64} = (0.10*Nᵥ, 0.10*Nᵥ, 0.25*Nᵥ, 0.55*Nᵥ)
     pop = (81982665,129596376,63157200,52431193)
 
     @unpack β, ξ, ν, σ, q, h, f, τ, γ, δ, ϵ, q̃, h̃, f̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
@@ -120,13 +122,13 @@ function Model!(du, u, p, t)
         #println("$(dot(M[a, :], Iₙ))")
         du[a] = -β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) -        
-                    ν[a]*S[a]*heaviside(Nᵥ - Dᵥ)
+                    ν[a]*heaviside(Nᵥ - Dᵥ)  ## removed S[a]
         # exposed E
         du[a+4]  = β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
-                    σ*E[a] - ν[a]*E[a]*heaviside(Nᵥ - Dᵥ)
+                    σ*E[a] - ν[a]*heaviside(Nᵥ - Dᵥ)*E[a]  ## removed E[a]
         #vaccinated, but exposed,  F
-        du[a+8] = -σ*F[a] + ν[a]*E[a]*heaviside(Nᵥ - Dᵥ)
+        du[a+8] = -σ*F[a] + ν[a]*heaviside(Nᵥ - Dᵥ)*E[a]  ## removed E[a]
         # In class
         du[a+12] = (1 - q[a])*(1 - h[a])*σ*(E[a] + F[a]) - (1 - f)*γ*Iₙ[a] - f*τ*Iₙ[a]
         # Qn class
@@ -138,7 +140,7 @@ function Model!(du, u, p, t)
         # vaccine class V 
         du[a+28] = -β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
                     β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) +
-                    ν[a]*S[a]*heaviside(Nᵥ - Dᵥ)
+                    ν[a]*heaviside(Nᵥ - Dᵥ) ## removed S[a]
         # Ẽ class
         du[a+32] = β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
@@ -160,11 +162,12 @@ function Model!(du, u, p, t)
         # Na class 
         du[a+60] = -mC*μC*C[a] - mH*μH*H[a]     
 
-        # Z class to calculate incindece 
+        # Z class to collect cumulative incindece 
         du[a+64] =  β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) 
 
         # CX, CY, DX, DY class to calculate hosp, icu cumulative incidence 
+        # X hosp, Y ICU
         # split this into alive(CX/CY), dead(DX/DY) as well 
         du[a+68] = ((1 - mH)*ψH)*H[a]  ## CX 
         du[a+72] = ((1 - mC)*ψC)*C[a]  ## CY
@@ -172,82 +175,118 @@ function Model!(du, u, p, t)
         du[a+80] = (mC*μC)*C[a]  ## DY
                     
     end
-    du[85] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(S[1] + E[1]) + ν[2]*(S[2] + E[2]) + ν[3]*(S[3] + E[3]) + ν[4]*(S[4] + E[4]))
+    #du[85] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(S[1] + E[1]) + ν[2]*(S[2] + E[2]) + ν[3]*(S[3] + E[3]) + ν[4]*(S[4] + E[4]))
+    du[85] = heaviside(Nᵥ - Dᵥ)*(1 + E[1]) + ν[2]*(1 + E[1]) + ν[3]*(1 + E[1]) + ν[4]*(1 + E[1])
     du[86] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(E[1]) + ν[2]*(E[2]) + ν[3]*(E[3]) + ν[4]*(E[4]))
 end
 
-## main simulation function. Runs the model above, nsims time.
-function runsims(p::ModelParameters, nsims=1)
-    # run sims with LHS. 
-    ## scenarios to run (no vaccine)
-    ## calibrate beta, 0.027 r0 ~ 1.8
-    ## q == 0.05, 0.1, 0.2 (taking into account contact tracing)
-    ## for any q, 
-    ## f = 20%, 40%, 60% 
-    ## tau = 1 day or 2 days (i.e. rate of 1 or 0.5)
+## ODE callback 
+condition(u,t,integrator) = t == 70.0
+isoutofdomain(u, t, integrator) = u[1] <= 0 || u[2] <= 0 || u[3] <= 0 || u[4] <= 0
+function vaccine!(integrator)
+    nva = integrator.p.nva
+    integrator.p.ν = (0.1*nva/7, 0.1*nva/7, 0.25*nva/7, 0.55*nva/7) # vaccination rate #10 10 25 55            
+end
+function zerod!(integrator)
+    for i = 1:4 
+        if integrator.u[i] <= 0 
+            integrator.u[i] = 0
+        end
+    end
+end
+cb = DiscreteCallback(condition,vaccine!)
+cb2= DiscreteCallback(isoutofdomain,zerod!)
+cbset = CallbackSet(cb, cb2)
 
+function run_model(p::ModelParameters, nsims=1)
     ## set up ODE time and initial conditions
     tspan = (0.0, 500.0)
     u0 = zeros(Float64, 86) ## total compartments
-
     sols = []    
     for mc = 1:nsims
         ## reset the initial conditions
-        print("...sim: $mc, params: $(p.τ), $(p.f) \r")
+       
         u0[1] = u0[61] = 81982665
         u0[2] = u0[62] = 129596376
         u0[3] = u0[63] = 63157200
         u0[4] = u0[64] = 52431193
         # initial infected person
         u0[13] = 1
-        
+
         # sample the parameters needed per simulation
+        p.ν = (0.0, 0.0, 0.0, 0.0)  ## reset vaccine rate. if vaccine is on, the integrator will properly set it based on nva.
         p.δ = 1/(rand(Uniform(2, 5)))
         p.σ = 1/(rand(LogNormal(log(5.2), 0.1)))     
-        p.h = (rand(Uniform(0.0085, 0.033)), rand(Uniform(0.0088, 0.034)), rand(Uniform(0.01, 0.04)), rand(Uniform(0.0157, 0.062)))
-        p.c = (rand(Uniform(0.0125, 0.0133)), rand(Uniform(0.0375, 0.04)), rand(Uniform(0.196, 0.21)), rand(Uniform(0.46, 0.48)))
+        p.h = (rand(Uniform(0.0085, 0.033)), rand(Uniform(0.0088, 0.034)), rand(Uniform(0.01, 0.042)), rand(Uniform(0.017, 0.066)))
+        p.c = (rand(Uniform(0.013, 0.015)), rand(Uniform(0.04, 0.044)), rand(Uniform(0.2, 0.22)), rand(Uniform(0.46, 0.50)))
         p.h̃ = @. (1 - p.ϵ) * p.h
         p.c̃ = @. (1 - p.ϵ) * p.c        
         
-        ## solve the ODE model
-        prob = ODEProblem(Model!, u0, tspan, p)
-        sol = solve(prob, Rodas4(autodiff=false), dt=1, adaptive=false)  ## WORKS
 
+        ## solve the ODE model
+        print("...sim: $mc, params: $(p.τ), $(p.f), $(p.nva), $(p.ν) \r")
+        prob = ODEProblem(Model!, u0, tspan, p)
+        sol = solve(prob, Rodas4(autodiff=false), dt=1, adaptive=false, callback=cbset)  ## WORKS
         push!(sols, sol)     
     end
+    println("\n simulation scenario finished")
     return sols
 end
 
-## helper functions to run different simulation scenarios.
-function sim_scenarios()
-    ## this function runs the simulations by calling runsims() 
-    ## with various parameters. 
-
+function run_single()
+    # A function that runs a single simulation for testing/calibrating purposes. 
     ## setup parameters (overwrite some default ones if needed)
-    p = ModelParameters()
-    p.β = 0.0037  ## 0.028: R0 ~ 2.0, next generation method
-    # beta=0.37 --->R0=2.5, beta=0.44 ---> R0=3, beta=0.052 ---> R0=3.5
+    p = ModelParameters() 
+    p.nva = 5e6
+    p.β = 0.037  ## 0.028: R0 ~ 2.0, next generation method
+    p.τ = 0.5
+    p.f = 0.05
+    p.f̃ = 0.05
+    sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
+    return sol
+end
 
-    ν_rate = 0.0088  ## 0.0088: 4 million doses. 
-    p.ν = (0.10*ν_rate, 0.10*ν_rate, 0.25*ν_rate, 0.55*ν_rate) # vaccination rate #10 10 25 55
-
+function run_scenarios()
+    ## setup parameters  (overwrite some default ones if needed)
+  
+    p = ModelParameters()   
+    ## go over these scenarios for f and taus
+    βs = (0.037, 0.044, 0.052) #r0 2.5, 3, 3.5
     fs = (0.05, 0.1, 0.2)
-    τs = (0.5, 1)    
-    for f in fs, τ in τs
+    τs = (0.5, 1)  
+    for v in (true, false), β in βs, f in fs, τ in τs
+        p.nva = v ? 5e6 : 0.0
+        p.β = β
         p.τ = τ  
         p.f = f
         p.f̃ = f
-       
-        ## setup folder name (refactor to separate function)
-        taustr = replace(string(τ), "." => "")
-        fstr = replace(string(f), "." => "")
-        fldrname = "./tau$(taustr)_f$(fstr)/"
-        mkdir(fldrname)
-        println("working on: $fldrname")
-        
-        sols = runsims(p, 100)
+        fldrname = savestr(p); println("working on: $fldrname")
+        sols = run_model(p, 100)
         savesims(sols, fldrname)
     end  
+end
+
+
+function savestr(p::ModelParameters)
+    ## setup folder name based on model parameters
+    taustr = replace(string(p.τ), "." => "")
+    fstr = replace(string(p.f), "." => "")
+    if p.β == 0.037
+        r0 = "r25"
+    elseif p.β == 0.044
+        r0 = "r30"
+    elseif p.β == 0.052
+        r0 = "r35"
+    else 
+        r0 = "undef"
+    end
+
+    if p.nva > 0 
+        fldrname = "./$r0/wivac/tau$(taustr)_f$(fstr)/"
+    else
+        fldrname = "./$r0/novac/tau$(taustr)_f$(fstr)/"
+    end
+    mkpath(fldrname)
 end
 
 function savesims(sols, prefix="./")
@@ -261,7 +300,7 @@ function savesims(sols, prefix="./")
     
     vars = (sus1, sus2, sus3, sus4, ci1, ci2, ci3, ci4,  cx1, cx2, cx3, cx4, cy1, cy2, cy3, cy4, dx1, dx2, dx3, dx4, dy1, dy2, dy3, dy4)
     fns = ("sus1", "sus2", "sus3", "sus4", "ci1", "ci2", "ci3", "ci4", "cx1", "cx2", "cx3", "cx4", "cy1", "cy2", "cy3", "cy4", "dx1", "dx2", "dx3", "dx4", "dy1", "dy2", "dy3", "dy4")
-    fns = string.(prefix, fns, ".csv") ## append the csv
+    fns = string.(prefix, "/", fns, ".csv") ## append the csv
     writedlm.(fns, vars, ',')
 
 end
@@ -277,20 +316,14 @@ function saveclass(class, sols)
     return hcat(res...)
 end
 
-
 function getclass(x, sol) 
     p = [sol.u[i][x] for i = 1:length(sol.u)]
     return p 
 end
 
-function plotclass(c, sol)
-    p = [sol.u[i][c] for i = 1:length(sol.u)]
-    plot(p)
-end
 
 function plots(sol)
     ## plots a summary of the solution (susceptibles, infected, H/Q, Exposed, etc...)
-
     ## susceptibles
     s1 = getclass(1, sol)
     s2 = getclass(2, sol)
@@ -321,70 +354,91 @@ function plots(sol)
 
     ## cumulative exposed Z class
     zexp = sum([getclass(i, sol) for i = 65:68])
-
     
     ## all the infected classes In, Qn, Ih, Qh class numbers 13 to 28
     totali = [getclass(i, sol) for i = 13:28]
     totali = sum(totali) #/ tspop
     println("total number of I (all classes) at start: $(totali[1]), peak: $(maximum(totali)),  end $(totali[end])")
 
-    #exposed_totali = e + totali ## double counting???
-    
+    # separate the infected classes (nonvaccine)
     i_n = sum([getclass(i, sol) for i = 13:16])
     i_h = sum([getclass(i, sol) for i = 21:24])
-    iclass = (i_n + i_h) #./ n
-    
     q_n = sum([getclass(i, sol) for i = 17:20])
     q_h = sum([getclass(i, sol) for i = 25:28])
+    iclass = (i_n + i_h) #./ n
     qclass = (q_n + q_h) #./ n
 
     ## vaccinated in, ih, qn, qh
     i_n_tilde = sum([getclass(i, sol) for i = 37:40])
     i_h_tilde = sum([getclass(i, sol) for i = 45:48])
-    iclass_tilde = (i_n_tilde + i_h_tilde) #./ n
-    
     q_n_tilde = sum([getclass(i, sol) for i = 41:44])
     q_h_tilde = sum([getclass(i, sol) for i = 49:52])
+    iclass_tilde = (i_n_tilde + i_h_tilde) #./ n
     qclass_tilde = (q_n_tilde + q_h_tilde) #./ n
 
+    ## uses the Z class to calculate incidence
     incidence = calculate_incidence(sol)
     
     ## prevalence of hospital/icu
     hosp = sum([getclass(i, sol) for i = 53:56])
     icu = sum([getclass(i, sol) for i = 57:60])
-
-    ## cumulative incidence hosp/icu CX, CY, DX, DY
-    ## THIS IS WRONG!!! fix compartment numbers.
-    chosp = sum([getclass(i, sol) for i = 69:76])
-    cicu = sum([getclass(i, sol) for i = 77:84])
-
     total_hosp_icu = hosp + icu
     ratio_symp_hosp = total_hosp_icu ./ totali
 
-    totalvac = sum([getclass(i, sol) for i = 29:32]) ## total vaccinated
+    ## cumulative incidence hosp/icu CX, CY, DX, DY
+    chospicu = sum([getclass(i, sol) for i = 69:84])
+    
+    ## vaccination numbers
+    totalvacV = sum([getclass(i, sol) for i = 29:32])  ## this is V class. 
+    totalvacF = sum([getclass(i, sol) for i = 9:12])   ## F class
+    totalvac=totalvacV+totalvacF
+    collectedvac = getclass(85, sol)
+    wastedvac = getclass(86, sol)
+
+    ## CHANGE in suspectibles, PER WEEK (used to calibrate the vaccine rate. not really needed anymore)
+    sus = [getclass(i, sol) for i = 1:4]   ## susceptibles left
+    nweek = Int(floor(length(sol.t)/7))
+    ws = fill(0.0, 4, nweek)
+    for a=1:4
+        ## calculate the change in susceptibles everyday
+        sinc = sus[a] - circshift(sus[a], -1)
+        sinc[end] = sinc[(end - 1)]
+
+        for i = 1:nweek
+            ws[a, i] = sum(sinc[(7*i - 6):(7*i)])
+        end
+    end
+    # plotting the above.
+    # l = @layout [a b; c d]
+    # p1 = bar(1:nweek, ws[1, :], label="sus[1]")
+    # p2 = bar(1:nweek, ws[2, :], label="sus[2]")
+    # p3 = bar(1:nweek, ws[3, :], label="sus[3]")
+    # p4 = bar(1:nweek, ws[4, :], label="sus[4]")
+    # display(plot(p1, p2, p3, p4, layout = l, linewidth=3, size=(1000, 600)))    
 
     l = @layout [a b; c d; e f; g h]
     #p1 = plot(1:length(mean_inc), [prob, szv])
     p1 = plot(sol.t, s, label="susceptibles")
-    p8 = plot(sol.t, zexp, label="c exp")
+    p2 = plot(sol.t, zexp, label="c exp")
 
-    p2 = plot(sol.t, [e, ẽ], label=["exposed" "exposed (vaccinated)"])
-    p3 = plot(sol.t, [iclass, qclass], label=["i class" "q class"])
+    p3 = plot(sol.t, [e, ẽ], label=["exposed" "exposed (vaccinated)"])
+    p4 = plot(sol.t, [iclass, qclass], label=["i class" "q class"])
 
-    p9 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])
-    p4 = plot(sol.t, incidence, label="incidence")
+    p5 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])
+    p6 = plot(sol.t, incidence, label="incidence")
 
     #p5 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
     #p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
     
-    p5 = plot(sol.t, ẽ, label=["e vac"])
-    p6 = plot(sol.t, totalvac, label=["total vac #"])
+    p7 = plot(sol.t, ẽ, label=["e vac"])    
+    p8 = plot(sol.t, [totalvac, collectedvac, wastedvac], label=["V+F" "Dv" "Wv"])
     
+    #p9 = groupedbar(rand(10,3), bar_position = :dodge)
     #p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
     #p7 = plot(sol.t, ratio_symp_hosp, legend=false)
    
     #Plots.scalefontsizes(0.1) #Or some other factor
-    plot(p1, p8, p2, p3, p9, p4, p5, p6, layout = l, linewidth=3, size=(1000, 600))
+    plot(p1, p2, p3, p4, p5, p6, p7, p8, layout = l, linewidth=3, size=(1000, 600))
 end
 
 
@@ -399,36 +453,6 @@ function calculate_incidence(sol)
    
     #println("hello")
     return(inc)
-end
-
-function check_vaccine()
-    ## check vaccine doses per week. 
-
-    ## setup parameters (overwrite some default ones if needed)
-    p = ModelParameters()
-    p.β = 0.0  ## 0.028: R0 ~ 2.0, next generation method
-    #ν_rate = 0.0044  ## nu = 0.0044 for 2 million doses on week 1. 
-    #ν_rate = 0.0088  ## 
-    ν_rate = 0.0133  ## 0.0133 for 6 million
-    p.ν = (0.10*ν_rate, 0.10*ν_rate, 0.25*ν_rate, 0.55*ν_rate) # vaccination rate #10 10 25 55
-    sol = runsims(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
-    tv = sum([getclass(i, sol) for i = 29:32]) ## total vaccinated
-
-    inc = circshift(tv, -1) - tv
-    inc[end] = inc[(end - 1)]
-
-    nweek = Int(floor(length(inc)/7))
-    week = zeros(Float64, nweek)
-    for i = 1:nweek
-       week[i] = sum(inc[(7*i - 6):(7*i)])
-    end
-
-    l = @layout [a b; c]
-    p1 = plot(sol.t, inc, label="daily vac")
-    p3 = plot(1:length(week), week, label="daily vac")
-    p2 = plot(sol.t, tv, label="total vaccinated", linewidth=3)
-    display(plot(p1, p2, p3, layout = l, linewidth=3, size=(1000, 600)))    
-    return week
 end
 
 ## NEGATIVE BINOMIAL SIMULATIONS 
@@ -483,8 +507,6 @@ function simulate_negbinomial(sol)
 
     sims = rand.(nb, 500)
     sims = transpose(hcat(sims...) )
-    
-
 
     # summarize the data and average out the simulations. 
     # need to put in a dataframe to be melted

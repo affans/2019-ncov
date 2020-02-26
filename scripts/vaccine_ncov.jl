@@ -8,17 +8,17 @@ using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles
 heaviside(x) = x <= 0 ? 0 : 1
 
 @with_kw mutable struct ModelParameters
-    # default parameter values, some are overwritten in the main function. 
+    # default parameter values, (fixed: fixed parameters, sampled: sampled at time of run, input: given as input,i.e. scenarios)
     ## parameters for transmission dynamics. 
     β::Float64 = 0.037 # (input) 0.037: R0 ~ 2.5, next generation method
     σ::Float64 = 1/5.2 # (sampled)incubation period 5.2 days mean, LogNormal 
     q::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # (fixed) proportion of self-quarantine
     h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## (sampled), default values mean of distribution 
     f::Float64 = 0.05  ## (input) default 5% self-isolation 
-    c::NTuple{4, Float64} = (0.0129, 0.03875, 0.203, 0.47) ## (sampled), default values mean of distribution     
+    c::NTuple{4, Float64} = (0.0129, 0.03875, 0.0705, 0.15) ## (sampled), default values mean of distribution, mean is average of Chiense and US CDC. 
     τ::Float64 = 0.5   # (input) symptom onset to isolation, default  average 1 day
     γ::Float64 = 1/4.6 # (fixed) symptom onset to recovery, assumed fixed, based on serial interval... sampling creates a problem negative numbers
-    δ::Float64 = 1/3.5 # (sampled), default value mean of distribution
+    δ::Float64 = 1/3.5 # (sampled), default value mean of distribution, symptom onset to hospitalization
 
     ## vaccination specific parameters
     nva::Float64 = 0.0 ## vaccine doses limit. baseline 5e6 
@@ -30,15 +30,15 @@ heaviside(x) = x <= 0 ? 0 : 1
     q̃::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # fixed
     h̃::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## sampled from h in sims
     f̃::Float64 = 0.05 ## same as f
-    c̃::NTuple{4, Float64} = (0.0129, 0.03875, 0.203, 0.47)  ## sampled from c in sims
+    c̃::NTuple{4, Float64} = (0.0129, 0.03875, 0.0705, 0.15)  ## sampled from c in sims
 
     ## recovery and mortality
-    mH::Float64 = 0.1116  ## prob of death in hospital
-    μH::Float64 = 1/12.4  ## length of hospital stay before death (CDC)
-    ψH::Float64 = 1/10    ## length of hospital stay before recovery
-    mC::Float64 = 0.1116  ## prob of death in ICU 
-    μC::Float64 = 1/7     ## length of ICU stay before death 
-    ψC::Float64 = 1/13.25 ## length of ICU before recovery  
+    mH::Float64 = 0.2296  ## prob of death in hospital
+    μH::Float64 = 1/9.7   ## length of hospital stay before death (average of CDC reports)  
+    ψH::Float64 = 1/10    ## length of hospital stay before recovery (JAMA paper, send PR to CDC GitHub jama paper is median)
+    mC::Float64 = 0.1396 ## prob of death in ICU 
+    μC::Float64 = 1/7     ## length of ICU stay before death Lancet Res "Clinical course and outcomes of critically ill Yang"
+    ψC::Float64 = 1/13.25 ## length of ICU before recovery (Chad's ventilation calculation)  
 end
 
 function contact_matrix()
@@ -48,12 +48,12 @@ function contact_matrix()
     M[2, :] = [3.774315965, 9.442271327, 3.044332992, 0.702042998]
     M[3, :] = [1.507919769, 3.044332992, 2.946427003, 0.760366544]
     M[4, :] = [0.603940171, 0.702042998, 0.760366544, 1.247911075]
-    Mbar = ones(Float64, 4, 4)
-    Mbar[1, :] = [2.039302567, 1.565307565, 0.5035389324, 0.3809355428]
-    Mbar[2, :] = [1.565307565, 1.509696249, 0.444748829, 0.2389607652]
-    Mbar[3, :] = [0.5035389324, 0.444748829, 1.03553314, 0.1908134302]
-    Mbar[4, :] = [0.3809355428, 0.2389607652, 0.1908134302, 0.6410794914]
-    return M, Mbar
+    M̃ = ones(Float64, 4, 4)
+    M̃[1, :] = [2.039302567, 1.565307565, 0.5035389324, 0.3809355428]
+    M̃[2, :] = [1.565307565, 1.509696249, 0.444748829, 0.2389607652]
+    M̃[3, :] = [0.5035389324, 0.444748829, 1.03553314, 0.1908134302]
+    M̃[4, :] = [0.3809355428, 0.2389607652, 0.1908134302, 0.6410794914]
+    return M, M̃
 end
 
 function Model!(du, u, p, t)
@@ -115,24 +115,25 @@ function Model!(du, u, p, t)
     M, M̃ = contact_matrix()
     
     # constants 
-    #Nᵥ = (150e6)
-    #nva::NTuple{4, Float64} = (0.10*Nᵥ, 0.10*Nᵥ, 0.25*Nᵥ, 0.55*Nᵥ)
-    pop = (81982665,129596376,63157200,52431193) #8.0912e+07
-    Nᵥ = floor.( ((125e6-(0.3*pop[2]+0.7*pop[3]+0.7*pop[4]))/2, 0.3*pop[2], 0.70*pop[3], 0.70*pop[4]) )
+    pop = (81982665,129596376,63157200,52431193)   ## fixed population
+    supply = 150e6  ## total supply including wastage
+    waste = 0  # estimated wastage of vaccine given to E 
+    evac = supply - waste   ## effective available vaccine
+    ## distribute the evac over the age groups. 
+    Nᵥ = floor.( ((evac-(0.3*pop[2]+0.7*pop[3]+0.7*pop[4]))/2, 0.3*pop[2], 0.70*pop[3], 0.70*pop[4]) )
 
     @unpack β, ξ, ν, σ, q, h, f, τ, γ, δ, ϵ, q̃, h̃, f̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
     for a = 1:4
-        # susceptibles
-        #println("$(dot(M[a, :], Iₙ))")
+        # sus S 
         du[a] = -β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) -        
                     ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a])  
         # exposed E
         du[a+4]  = β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
                     β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
-                    σ*E[a] #- ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*E[a]  ##  RATE HERE IS A BIG PROBLEM!!!!
-        #vaccinated, but exposed,  F
-        du[a+8] = -σ*F[a]*0 #+ ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*E[a]  
+                    σ*E[a] - ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a]))  ## rate is multiplied by the proportion of E left (otherwise equal amounts of people are vaccinated in S and E)
+        # F class: vaccinated, but exposed
+        du[a+8] = -σ*F[a] + ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a])) 
         # In class
         du[a+12] = (1 - q[a])*(1 - h[a])*σ*(E[a] + F[a]) - (1 - f)*γ*Iₙ[a] - f*τ*Iₙ[a]
         # Qn class
@@ -179,18 +180,13 @@ function Model!(du, u, p, t)
         du[a+80] = (mC*μC)*C[a]  ## DY
 
         ## DV class
-        du[a+84] = ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a]) #+ ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*E[a]
+        du[a+84] = ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a]) + ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a]))
     end
-    #du[85] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(S[1] + E[1]) + ν[2]*(S[2] + E[2]) + ν[3]*(S[3] + E[3]) + ν[4]*(S[4] + E[4]))
-    #du[85] = heaviside(Nᵥ - Dᵥ)*(ν[1]*(1 + E[1]) + ν[2]*(1 + E[1]) + ν[3]*(1 + E[1]) + ν[4]*(1 + E[1])
-    #du[89] = ν[1]*heaviside(Nᵥ[1] - Dᵥ[1])*E[1] + ν[2]*heaviside(Nᵥ[2] - Dᵥ[2])*E[2] +
-    #            ν[3]*heaviside(Nᵥ[3] - Dᵥ[3])*E[3] + ν[4]*heaviside(Nᵥ[4] - Dᵥ[4])*E[4]
     du[89] = σ*(F[1] + F[2] + F[3] + F[4])
 end
 
-## ODE callback 
+## ODE callback fn for starting vaccination at day 70. 
 condition(u,t,integrator) = round(t; digits=1) == 70.0
-
 function vaccine!(integrator)
     nva = integrator.p.nva
     integrator.p.ν = (0.1*nva, 0.1*nva, 0.25*nva, 0.55*nva)./7 # vaccination rate #10 10 25 55            
@@ -226,7 +222,7 @@ function run_model(p::ModelParameters, nsims=1)
         p.δ = 1/(rand(Uniform(2, 5)))
         p.σ = 1/(rand(LogNormal(log(5.2), 0.1)))     
         p.h = (rand(Uniform(0.0085, 0.033)), rand(Uniform(0.0088, 0.034)), rand(Uniform(0.01, 0.042)), rand(Uniform(0.017, 0.066)))
-        p.c = (rand(Uniform(0.013, 0.015)), rand(Uniform(0.04, 0.044)), rand(Uniform(0.2, 0.22)), rand(Uniform(0.46, 0.50)))
+        p.c = (rand(Uniform(0.013, 0.015)), rand(Uniform(0.04, 0.044)), rand(Uniform(0.05, 0.1)), rand(Uniform(0.10, 0.20)))
         p.h̃ = @. (1 - p.ϵ) * p.h
         p.c̃ = @. (1 - p.ϵ) * p.c        
         
@@ -245,7 +241,7 @@ function run_single()
     # A function that runs a single simulation for testing/calibrating purposes. 
     ## setup parameters (overwrite some default ones if needed)
     p = ModelParameters() 
-    p.nva = 10e6 #70#10e6#5e6
+    p.nva = 5e6 #70#10e6#5e6
     p.β =  0.037  ## 0.028: R0 ~ 2.0, next generation method
     p.τ = 1.0
     p.f = 0.1

@@ -2,7 +2,7 @@
 ## Affan Shoukat, 2020
 
 using DifferentialEquations, Plots, Parameters, DataFrames, CSV, LinearAlgebra
-using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles
+using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles, ProgressMeter
 
 ∑(x) = sum(x) # synctactic sugar
 heaviside(x) = x <= 0 ? 0 : 1
@@ -20,11 +20,13 @@ heaviside(x) = x <= 0 ? 0 : 1
     γ::Float64 = 1/4.6 # (fixed) symptom onset to recovery, assumed fixed, based on serial interval... sampling creates a problem negative numbers
     δ::Float64 = 1/3.5 # (sampled), default value mean of distribution, symptom onset to hospitalization
 
-    ## vaccination specific parameters
-    nva::Float64 = 0.0 ## vaccine doses limit. baseline 5e6 
-    ν::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) 
-    ξ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) # reduction in transmission, use vaccine efficacy or 0.0 to be conservative
+    ## vaccination specific parameters   
+    nva::Float64 = 0 ## vaccine dose limit PER WEEK. baseline 5e6, if 0 vaccine is turned off
+    maxv::Float64 = 150e6 ## maximum supply of vaccine
+    strat::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0)  ## strategy of vaccination (i.e. distribution of maxv (-waste) to 4 agegroups)
+    ν::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0)  ## rate of vaccination (i.e. # of doses/day constant rate)
     ϵ::NTuple{4, Float64} = (0.64, 0.64, 0.48, 0.32)# vaccine efficacy, frailty index per age group * 80% base efficacy
+    ξ::NTuple{4, Float64} = (0.0, 0.0, 0.0, 0.0) # reduction in transmission, use vaccine efficacy or 0.0 to be conservative
     
     ## transmission parameters for vaccinated
     q̃::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # fixed
@@ -39,6 +41,10 @@ heaviside(x) = x <= 0 ? 0 : 1
     mC::Float64 = 0.1396 ## prob of death in ICU 
     μC::Float64 = 1/7     ## length of ICU stay before death Lancet Res "Clinical course and outcomes of critically ill Yang"
     ψC::Float64 = 1/13.25 ## length of ICU before recovery (Chad's ventilation calculation)  
+
+    ## internal parameters 
+    pop::NTuple{4, Float64} = (81982665,129596376,63157200,52431193)
+
 end
 
 function contact_matrix()
@@ -115,12 +121,8 @@ function Model!(du, u, p, t)
     M, M̃ = contact_matrix()
     
     # constants 
-    pop = (81982665,129596376,63157200,52431193)   ## fixed population
-    supply = 150e6  ## total supply including wastage
-    waste = 0  # estimated wastage of vaccine given to E 
-    evac = supply - waste   ## effective available vaccine
-    ## distribute the evac over the age groups. 
-    Nᵥ = floor.( ((evac-(0.3*pop[2]+0.7*pop[3]+0.7*pop[4]))/2, 0.3*pop[2], 0.70*pop[3], 0.70*pop[4]) )
+    pop = p.pop  ## fixed population
+    Nᵥ = p.strat
 
     @unpack β, ξ, ν, σ, q, h, f, τ, γ, δ, ϵ, q̃, h̃, f̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
     for a = 1:4
@@ -151,7 +153,7 @@ function Model!(du, u, p, t)
                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
                    σ*Ẽ[a]
         # Ĩn class
-        du[a+36] = (1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - f̃)*γ*Ĩₙ[a] - f̃*τ*Ĩₙ[a]
+        du[a+36] = (1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - f̃)*γ*Ĩₙ[a] - f̃*τ*Ĩₙ[a]t
         # Q̃n class
         du[a+40] = q̃[a]*(1 - h̃[a])*σ*Ẽ[a] + f̃*τ*Ĩₙ[a] - γ*Q̃ₙ[a]
         # Ĩh class
@@ -189,7 +191,8 @@ end
 condition(u,t,integrator) = round(t; digits=1) == 70.0
 function vaccine!(integrator)
     nva = integrator.p.nva
-    integrator.p.ν = (0.1*nva, 0.1*nva, 0.25*nva, 0.55*nva)./7 # vaccination rate #10 10 25 55            
+    #integrator.p.ν = (0.1*nva, 0.1*nva, 0.25*nva, 0.55*nva)./7 ## speed, outcome based 
+    integrator.p.ν = (0.25*nva, 0.55*nva, 0.1*nva, 0.1*nva)./7 ## speed, morbidity based 
 end
 isoutofdomain(u, t, integrator) = u[1] <= 0 || u[2] <= 0 || u[3] <= 0 || u[4] <= 0
 function zerod!(integrator)
@@ -210,10 +213,10 @@ function run_model(p::ModelParameters, nsims=1)
     sols = []    
     for mc = 1:nsims
         ## reset the initial conditions
-        u0[1] = u0[61] = 81982665
-        u0[2] = u0[62] = 129596376
-        u0[3] = u0[63] = 63157200
-        u0[4] = u0[64] = 52431193
+        u0[1] = u0[61] = p.pop[1]
+        u0[2] = u0[62] = p.pop[2]
+        u0[3] = u0[63] = p.pop[3]
+        u0[4] = u0[64] = p.pop[4]
         # initial infected person
         u0[13] = 1
 
@@ -227,13 +230,13 @@ function run_model(p::ModelParameters, nsims=1)
         p.c̃ = @. (1 - p.ϵ) * p.c        
         
         ## solve the ODE model
-        print("...sim: $mc, params: $(p.τ), $(p.f), $(p.nva), $(p.ν) \r")
+        #print("...sim: $mc, params: $(p.τ), $(p.f), $(p.nva), $(p.ν) \r")
         prob = ODEProblem(Model!, u0, tspan, p)
         sol = solve(prob, Rodas4(autodiff=false), dt=1.0, adaptive=false, callback=cb)  ## WORKS
         #sol = solve(prob, Rosenbrock23(autodiff=false),  dt=0.1, adaptive=false, callback=cbset)  ## WORKS
         push!(sols, sol)     
     end
-    println("\n simulation scenario finished")
+    #println("\n simulation scenario finished")
     return sols
 end
 
@@ -241,55 +244,54 @@ function run_single()
     # A function that runs a single simulation for testing/calibrating purposes. 
     ## setup parameters (overwrite some default ones if needed)
     p = ModelParameters() 
+    p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
+    #p.strat = floor.( (0.70*p.pop[1], 0.70*p.pop[2], 0.30*p.pop[3], (evac-(0.7*p.pop[1]+0.7*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
     p.nva = 5e6 #70#10e6#5e6
-    p.β =  0.037  ## 0.028: R0 ~ 2.0, next generation method
+    p.β =  0.0379 
     p.τ = 1.0
     p.f = 0.1
     p.f̃ = 0.1
+    dump(p)
     sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
     return sol
 end
 
 function run_scenarios()
     ## setup parameters  (overwrite some default ones if needed)
-  
     p = ModelParameters()   
     ## go over these scenarios for f and taus
-    βs = (0.037, 0.044, 0.052) #r0 2.5, 3, 3.5
+    #βs = (0.0379, 0.0455, 0.0531) #r0 2.5, 3, 3.5 [0.0379    0.0455    0.0531];
+    βs = (0.0455, 0.0531) #r0 2.5, 3, 3.5 [0.0379    0.0455    0.0531];
     fs = (0.05, 0.1, 0.2)
     τs = (0.5, 1)  
-    for v in (true, false), β in βs, f in fs, τ in τs
-        p.nva = v ? 5e6 : 0.0
+    nvas = (0, 5e6, 10e6)
+    ss = [] ## return vector
+    ts = length(βs) * length(fs) * length(τs) * length(nvas) 
+    pr = Progress(ts, dt=1, barglyphs=BarGlyphs("[=> ]"), barlen=50, color=:yellow)
+    for v in nvas, β in βs, f in fs, τ in τs
+        #p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
+        p.strat = floor.( (0.40*p.pop[1], 0.60*p.pop[2], 0.30*p.pop[3], (p.maxv-(0.4*p.pop[1]+0.6*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
+        p.nva = v ## doses per week
         p.β = β
         p.τ = τ  
         p.f = f
         p.f̃ = f
-        fldrname = savestr(p); println("working on: $fldrname")
+        fldrname = savestr(p);
         sols = run_model(p, 100)
+        push!(ss, sols)
+        next!(pr)
         savesims(sols, fldrname)
     end  
+    return ss
 end
-
 
 function savestr(p::ModelParameters)
     ## setup folder name based on model parameters
     taustr = replace(string(p.τ), "." => "")
     fstr = replace(string(p.f), "." => "")
-    if p.β == 0.037
-        r0 = "r25"
-    elseif p.β == 0.044
-        r0 = "r30"
-    elseif p.β == 0.052
-        r0 = "r35"
-    else 
-        r0 = "undef"
-    end
-
-    if p.nva > 0 
-        fldrname = "./$r0/wivac/tau$(taustr)_f$(fstr)/"
-    else
-        fldrname = "./$r0/novac/tau$(taustr)_f$(fstr)/"
-    end
+    rstr = replace(string(p.β), "." => "")
+    vstr = replace(string(p.nva), "." => "")
+    fldrname = "./b$rstr/v$vstr/tau$(taustr)_f$(fstr)/"
     mkpath(fldrname)
 end
 
@@ -305,8 +307,7 @@ function savesims(sols, prefix="./")
     vars = (sus1, sus2, sus3, sus4, ci1, ci2, ci3, ci4,  cx1, cx2, cx3, cx4, cy1, cy2, cy3, cy4, dx1, dx2, dx3, dx4, dy1, dy2, dy3, dy4)
     fns = ("sus1", "sus2", "sus3", "sus4", "ci1", "ci2", "ci3", "ci4", "cx1", "cx2", "cx3", "cx4", "cy1", "cy2", "cy3", "cy4", "dx1", "dx2", "dx3", "dx4", "dy1", "dy2", "dy3", "dy4")
     fns = string.(prefix, "/", fns, ".csv") ## append the csv
-    #writedlm.(fns, vars, ',')
-
+    writedlm.(fns, vars, ',')
 end
 
 
@@ -558,4 +559,3 @@ function lhsu(xmin, xmax, nsample)
     end
     return s
 end
-

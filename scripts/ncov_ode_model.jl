@@ -160,13 +160,13 @@ function Model!(du, u, p, t)
                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
                    σ*Ẽ[a]
         # Ĩn class
-        du[a+36] = (1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - f̃)*γ*Ĩₙ[a] - f̃*τ*Ĩₙ[a]t
+        du[a+36] = (1 - θ[a])*(1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - f̃)*γ*Ĩₙ[a] - f̃*τ*Ĩₙ[a]t
         # Q̃n class
-        du[a+40] = q̃[a]*(1 - h̃[a])*σ*Ẽ[a] + f̃*τ*Ĩₙ[a] - γ*Q̃ₙ[a]
+        du[a+40] = (1 - θ[a])*q̃[a]*(1 - h̃[a])*σ*Ẽ[a] + f̃*τ*Ĩₙ[a] - γ*Q̃ₙ[a]
         # Ĩh class
-        du[a+44] = (1 - q̃[a])*h̃[a]*σ*Ẽ[a] - δ*Ĩₕ[a]
+        du[a+44] = (1 - θ[a])*(1 - q̃[a])*h̃[a]*σ*Ẽ[a] - δ*Ĩₕ[a]
         # Q̃h class
-        du[a+48] = q̃[a]*h̃[a]*σ*Ẽ[a] - δ*Q̃ₕ[a]
+        du[a+48] = (1 - θ[a])*q̃[a]*h̃[a]*σ*Ẽ[a] - δ*Q̃ₕ[a]
         # Ha class
         du[a+52] = (1 - c[a])*δ*Iₕ[a] + (1 - c[a])*δ*Qₕ[a] + (1 - c̃[a])*δ*Ĩₕ[a] + (1 - c̃[a])*δ*Q̃ₕ[a] - 
                     (mH*μH + (1 - mH)*ψH)*H[a]                    

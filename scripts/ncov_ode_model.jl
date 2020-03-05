@@ -7,9 +7,6 @@ using StatsPlots, Query, Distributions, Statistics, Random, DelimitedFiles, Prog
 ∑(x) = sum(x) # synctactic sugar
 heaviside(x) = x <= 0 ? 0 : 1
 
-
-theta_1=0.8; theta_2=0.8; theta_3=0.6; theta_4=0.8
-
 @with_kw mutable struct ModelParameters
     # default parameter values, (fixed: fixed parameters, sampled: sampled at time of run, input: given as input,i.e. scenarios)
     ## parameters for transmission dynamics. 

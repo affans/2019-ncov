@@ -12,6 +12,7 @@ papers
 .Rhistory
 .Rproj.user
 .ipynb_checkpoints
+.vscode
 
 ################################################################################
 #                                    Julia                                     #

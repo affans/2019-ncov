@@ -14,7 +14,7 @@ heaviside(x) = x <= 0 ? 0 : 1
     κ::Float64 = 0.5 # (fixed) reduction in transmission due to mild symptoms. 
     σ::Float64 = 1/5.2 # (sampled)incubation period 5.2 days mean, LogNormal 
     q::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # (fixed) proportion of self-quarantine
-    h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## (sampled), default values mean of distribution 
+    h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## (sampled), default values mean of distribution proporition of TOTAL infections going to hospital.
     f::Float64 = 0.05  ## (input) default 5% self-isolation 
     c::NTuple{4, Float64} = (0.0129, 0.03875, 0.0705, 0.15) ## (sampled), default values mean of distribution, mean is average of Chiense and US CDC. 
     τ::Float64 = 0.5   # (input) symptom onset to isolation, default  average 1 day
@@ -52,15 +52,15 @@ end
 function contact_matrix()
     ## contact matrix for general population and in household. 
     M = ones(Float64, 4, 4)
-    M[1, :] = [9.786719237, 3.774315965, 1.507919769, 0.603940171]
-    M[2, :] = [3.774315965, 9.442271327, 3.044332992, 0.702042998]
-    M[3, :] = [1.507919769, 3.044332992, 2.946427003, 0.760366544]
-    M[4, :] = [0.603940171, 0.702042998, 0.760366544, 1.247911075]
+    M[1, :] = [9.76190295449833 3.76760818611057 1.50823242972404 0.603972723406184]
+    M[2, :] = [3.76760818611057 9.42964041341912 3.05467747979113 0.702942024329397]
+    M[3, :] = [1.50823242972404 3.05467747979113 2.95716998311431 0.760587605942274]
+    M[4, :] = [0.603972723406184 0.702942024329397 0.760587605942274 1.24948301635913]
     M̃ = ones(Float64, 4, 4)
-    M̃[1, :] = [2.039302567, 1.565307565, 0.5035389324, 0.3809355428]
-    M̃[2, :] = [1.565307565, 1.509696249, 0.444748829, 0.2389607652]
-    M̃[3, :] = [0.5035389324, 0.444748829, 1.03553314, 0.1908134302]
-    M̃[4, :] = [0.3809355428, 0.2389607652, 0.1908134302, 0.6410794914]
+    M̃[1, :] = [2.03651666746364 1.56405653862347 0.504076940943109 0.380678379808072]
+    M̃[2, :] = [1.56405653862347 1.50876370897303 0.445015376096172 0.239252424523331]
+    M̃[3, :] = [0.504076940943109 0.445015376096172 1.03746276893954 0.191098354935966]
+    M̃[4, :] = [0.380678379808072 0.239252424523331 0.191098354935966 0.641792954732621]
     return M, M̃
 end
 
@@ -177,10 +177,8 @@ function Model!(du, u, p, t)
         du[a+60] = -mC*μC*C[a] - mH*μH*H[a]     
 
         # Z class to collect cumulative incindece 
-        du[a+64] =  β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
-                    β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) 
-
-      
+        du[a+64] =  β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], A./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ã./pop))) +
+                    β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)))
         ## collect cumulative incidence of hospitalization and ICU class 69 to 84
         du[a+68] = (1 - c[a])*δ*Iₕ[a] + (1 - c[a])*δ*Qₕ[a] + (1 - c̃[a])*δ*Ĩₕ[a] + (1 - c̃[a])*δ*Q̃ₕ[a]  
         du[a+72] = c[a]*δ*Iₕ[a] + c[a]*δ*Qₕ[a] + c̃[a]*δ*Ĩₕ[a] + c̃[a]*δ*Q̃ₕ[a]  
@@ -223,7 +221,7 @@ cb = DiscreteCallback(condition, vaccine!, save_positions=(false,false))
 
 function run_model(p::ModelParameters, nsims=1)
     ## set up ODE time and initial conditions
-    tspan = (0.0, 1000.0)
+    tspan = (0.0, 500.0)
     u0 = zeros(Float64, 97) ## total compartments
     sols = []    
     for mc = 1:nsims
@@ -239,8 +237,8 @@ function run_model(p::ModelParameters, nsims=1)
         p.ν = (0.0, 0.0, 0.0, 0.0)  ## reset vaccine rate. if vaccine is on, the integrator will properly set it based on nva.
         p.δ = 1/(rand(Uniform(2, 5)))
         p.σ = 1/(rand(LogNormal(log(5.2), 0.1)))     
-        p.h = (rand(Uniform(0.0085, 0.033)), rand(Uniform(0.0088, 0.034)), rand(Uniform(0.01, 0.042)), rand(Uniform(0.017, 0.066)))
-        p.c = (rand(Uniform(0.013, 0.015)), rand(Uniform(0.04, 0.044)), rand(Uniform(0.05, 0.1)), rand(Uniform(0.10, 0.20)))
+        p.h = (rand(Uniform(0.0085, 0.033)), rand(Uniform(0.0088, 0.034)), rand(Uniform(0.01, 0.042)), rand(Uniform(0.017, 0.066))) ./ (1 .- p.θ)
+        p.c = (rand(Uniform(0.013, 0.015)), rand(Uniform(0.04, 0.044)), rand(Uniform(0.05, 0.1)), rand(Uniform(0.10, 0.20))) ## c dosnt change
         p.h̃ = @. (1 - p.ϵ) * p.h
         p.c̃ = @. (1 - p.ϵ) * p.c        
         
@@ -276,10 +274,10 @@ end
 function run_scenarios()
     ## setup parameters  (overwrite some default ones if needed)
     p = ModelParameters()   
-    R0s = ("3.0",)
+    R0s = ("2.0", )
     fs = (0.05, 0.1, 0.2)
     τs = (0.5, 1)  
-    nvas = (0, 5e6)
+    nvas = (0) #(0, 5e6)
     ss = [] ## return vector
     ts = length(R0s) * length(fs) * length(τs) * length(nvas) 
     pr = Progress(ts, dt=1, barglyphs=BarGlyphs("[=> ]"), barlen=50, color=:yellow)

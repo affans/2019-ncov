@@ -14,10 +14,12 @@ heaviside(x) = x <= 0 ? 0 : 1
     κ::Float64 = 0.5 # (fixed) reduction in transmission due to mild symptoms. 
     σ::Float64 = 1/5.2 # (sampled)incubation period 5.2 days mean, LogNormal 
     q::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # (fixed) proportion of self-quarantine
-    h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## (sampled), default values mean of distribution proporition of TOTAL infections going to hospital.
-    f::Float64 = 0.05  ## (input) default 5% self-isolation 
+    h::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## (sampled), default values mean of distribution proporition of TOTAL infections going to hospital.    
+    fₐ::Float64 = 0.05 ##   
+    fᵢ::Float64 = 0.80 ##
     c::NTuple{4, Float64} = (0.0129, 0.03875, 0.0705, 0.15) ## (sampled), default values mean of distribution, mean is average of Chiense and US CDC. 
-    τ::Float64 = 0.5   # (input) symptom onset to isolation, default  average 1 day
+    τₐ::Float64 = 0.5   ## 
+    τᵢ::Float64 = 1   ## 
     γ::Float64 = 1/4.6 # (fixed) symptom onset to recovery, assumed fixed, based on serial interval... sampling creates a problem negative numbers
     δ::Float64 = 1/3.5 # (sampled), default value mean of distribution, symptom onset to hospitalization
     θ::NTuple{4, Float64} = (0.8, 0.8, 0.4, 0.2) ## (fixed)
@@ -33,7 +35,6 @@ heaviside(x) = x <= 0 ? 0 : 1
     ## transmission parameters for vaccinated
     q̃::NTuple{4, Float64} = (0.05, 0.05, 0.05, 0.05) # fixed
     h̃::NTuple{4, Float64} = (0.02075, 0.02140, 0.025, 0.03885) ## sampled from h in sims
-    f̃::Float64 = 0.05 ## same as f
     c̃::NTuple{4, Float64} = (0.0129, 0.03875, 0.0705, 0.15)  ## sampled from c in sims
 
     ## recovery and mortality
@@ -92,8 +93,10 @@ function Model!(du, u, p, t)
     ## vaccine compartments
     D₁, D₂, D₃, D₄,
     ## asymptomatic classes 
-    A₁, A₂, A₃, A₄,
-    Ã₁, Ã₂, Ã₃, Ã₄,
+    Aₙ₁, Aₙ₂, Aₙ₃, Aₙ₄, 
+    Aₛ₁, Aₛ₂, Aₛ₃, Aₛ₄, 
+    Ãₙ₁, Ãₙ₂, Ãₙ₃, Ãₙ₄,
+    Ãₛ₁, Ãₛ₂, Ãₛ₃, Ãₛ₄,
     Wᵥ = u
     
     # set up the vectors for syntactic sugar 
@@ -104,14 +107,16 @@ function Model!(du, u, p, t)
     Qₙ = (Qₙ₁, Qₙ₂, Qₙ₃, Qₙ₄)
     Iₕ = (Iₕ₁, Iₕ₂, Iₕ₃, Iₕ₄) 
     Qₕ = (Qₕ₁, Qₕ₂, Qₕ₃, Qₕ₄)
-    A = (A₁, A₂, A₃, A₄)
+    Aₙ = (Aₙ₁, Aₙ₂, Aₙ₃, Aₙ₄)
+    Aₛ = (Aₛ₁, Aₛ₂, Aₛ₃, Aₛ₄)
     V = (V₁, V₂, V₃, V₄)
     Ẽ = (Ẽ₁, Ẽ₂, Ẽ₃, Ẽ₄)
     Ĩₙ = (Ĩₙ₁, Ĩₙ₂, Ĩₙ₃, Ĩₙ₄)
     Q̃ₙ = (Q̃ₙ₁, Q̃ₙ₂, Q̃ₙ₃, Q̃ₙ₄)
     Ĩₕ = (Ĩₕ₁, Ĩₕ₂, Ĩₕ₃, Ĩₕ₄)
     Q̃ₕ = (Q̃ₕ₁, Q̃ₕ₂, Q̃ₕ₃, Q̃ₕ₄)
-    Ã = (Ã₁, Ã₂, Ã₃, Ã₄)
+    Ãₙ = (Ãₙ₁, Ãₙ₂, Ãₙ₃, Ãₙ₄)
+    Ãₛ = (Ãₛ₁, Ãₛ₂, Ãₛ₃, Ãₛ₄)
     H = (H₁, H₂, H₃, H₄)
     C = (C₁, C₂, C₃, C₄)
     N = (N₁, N₂, N₃, N₄)
@@ -131,57 +136,60 @@ function Model!(du, u, p, t)
     pop = p.pop  ## fixed population
     Nᵥ = p.strat
 
-    @unpack β, κ, ξ, ν, σ, q, h, f, τ, γ, δ, θ, ϵ, q̃, h̃, f̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
+    ## working in new model 
+
+    @unpack β, κ, ξ, ν, σ, q, h, fₐ, fᵢ, τₐ, τᵢ, γ, δ, θ, ϵ, q̃, h̃, c, c̃, mH, μH, ψH, mC, μC, ψC = p
     for a = 1:4
         # sus S 
-        du[a+0] = -β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], A./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ã./pop))) - 
-                   β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) -        
+        du[a+0] = -β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], Aₙ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ãₙ./pop))) - 
+                   β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + κ*dot(M̃[a, :], Aₛ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)) + κ*dot(M̃[a, :], (1 .- ξ).*(Ãₛ./pop))) -        
                    ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a])  
         # exposed E
-        du[a+4]  = β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], A./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ã./pop))) +
-                   β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
+        du[a+4]  = β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], Aₙ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ãₙ./pop))) +
+                   β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + κ*dot(M̃[a, :], Aₛ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)) + κ*dot(M̃[a, :], (1 .- ξ).*(Ãₛ./pop))) - 
                    σ*E[a] - ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a]))  ## rate is multiplied by the proportion of E left (otherwise equal amounts of people are vaccinated in S and E)
         # F class: vaccinated, but exposed
         du[a+8] = -σ*F[a] + ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a])) 
         # In class
-        du[a+12] = (1 - θ[a])*(1 - q[a])*(1 - h[a])*σ*(E[a] + F[a]) - (1 - f)*γ*Iₙ[a] - f*τ*Iₙ[a]
+        du[a+12] = (1 - θ[a])*(1 - q[a])*(1 - h[a])*σ*(E[a] + F[a]) - (1 - fᵢ)*γ*Iₙ[a] - fᵢ*τᵢ*Iₙ[a]
         # Qn class
-        du[a+16] = (1 - θ[a])*q[a]*(1 - h[a])*σ*(E[a] + F[a]) + f*τ*Iₙ[a] - γ*Qₙ[a] 
+        du[a+16] = (1 - θ[a])*q[a]*(1 - h[a])*σ*(E[a] + F[a]) + fᵢ*τᵢ*Iₙ[a] - γ*Qₙ[a] 
         # Ih class
-        du[a+20] = (1 - θ[a])*(1 - q[a])*h[a]*σ*(E[a] + F[a]) - δ*Iₕ[a]
+        du[a+20] = (1 - θ[a])*(1 - q[a])*h[a]*σ*(E[a] + F[a]) - (1 - fᵢ)*δ*Iₕ[a] - fᵢ*τᵢ*Iₕ[a]
         # Qh class 
-        du[a+24] = (1 - θ[a])*q[a]*h[a]*σ*(E[a] + F[a]) - δ*Qₕ[a]
+        du[a+24] = (1 - θ[a])*q[a]*h[a]*σ*(E[a] + F[a]) + fᵢ*τᵢ*Iₕ[a] - δ*Qₕ[a] 
         # vaccine class V 
-        du[a+28] = -β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) - 
-                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) +
+        du[a+28] = -β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], Aₙ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ãₙ./pop))) - 
+                    β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + κ*dot(M̃[a, :], Aₛ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)) + κ*dot(M̃[a, :], (1 .- ξ).*(Ãₛ./pop))) +
                     ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a]) 
         # Ẽ class
-        du[a+32] = β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop))) +
-                   β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop))) - 
+        du[a+32] = β*(1 - ϵ[a])*V[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], Aₙ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ãₙ./pop))) + 
+                   β*(1 - ϵ[a])*V[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + κ*dot(M̃[a, :], Aₛ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)) + κ*dot(M̃[a, :], (1 .- ξ).*(Ãₛ./pop))) -
                    σ*Ẽ[a]
         # Ĩn class
-        du[a+36] = (1 - θ[a])*(1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - f̃)*γ*Ĩₙ[a] - f̃*τ*Ĩₙ[a]t
+        du[a+36] = (1 - θ[a])*(1 - q̃[a])*(1 - h̃[a])*σ*Ẽ[a] - (1 - fᵢ)*γ*Ĩₙ[a] - fᵢ*τᵢ*Ĩₙ[a]t
         # Q̃n class
-        du[a+40] = (1 - θ[a])*q̃[a]*(1 - h̃[a])*σ*Ẽ[a] + f̃*τ*Ĩₙ[a] - γ*Q̃ₙ[a]
+        du[a+40] = (1 - θ[a])*q̃[a]*(1 - h̃[a])*σ*Ẽ[a] + fᵢ*τᵢ*Ĩₙ[a] - γ*Q̃ₙ[a]
         # Ĩh class
-        du[a+44] = (1 - θ[a])*(1 - q̃[a])*h̃[a]*σ*Ẽ[a] - δ*Ĩₕ[a]
+        du[a+44] = (1 - θ[a])*(1 - q̃[a])*h̃[a]*σ*Ẽ[a] - (1 - fᵢ)*δ*Ĩₕ[a] - fᵢ*τᵢ*Ĩₕ[a]
         # Q̃h class
-        du[a+48] = (1 - θ[a])*q̃[a]*h̃[a]*σ*Ẽ[a] - δ*Q̃ₕ[a]
+        du[a+48] = (1 - θ[a])*q̃[a]*h̃[a]*σ*Ẽ[a] + fᵢ*τᵢ*Ĩₕ[a] - δ*Q̃ₕ[a]
+        
         # Ha class
-        du[a+52] = (1 - c[a])*δ*Iₕ[a] + (1 - c[a])*δ*Qₕ[a] + (1 - c̃[a])*δ*Ĩₕ[a] + (1 - c̃[a])*δ*Q̃ₕ[a] - 
+        du[a+52] = (1 - c[a])*(1 - fᵢ)*δ*Iₕ[a] + (1 - c[a])*δ*Qₕ[a] + (1 - c̃[a])*(1 - fᵢ)*δ*Ĩₕ[a] + (1 - c̃[a])*δ*Q̃ₕ[a] - 
                     (mH*μH + (1 - mH)*ψH)*H[a]                    
         # Ca class
-        du[a+56] = c[a]*δ*Iₕ[a] + c[a]*δ*Qₕ[a] + c̃[a]*δ*Ĩₕ[a] + c̃[a]*δ*Q̃ₕ[a] - 
+        du[a+56] = c[a]*(1 - fᵢ)*δ*Iₕ[a] + c[a]*δ*Qₕ[a] + c̃[a]*(1 - fᵢ)*δ*Ĩₕ[a] + c̃[a]*δ*Q̃ₕ[a] - 
                     (mC*μC + (1 - mC)*ψC)*C[a]
         # Na class 
         du[a+60] = -mC*μC*C[a] - mH*μH*H[a]     
 
-        # Z class to collect cumulative incindece 
-        du[a+64] =  β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], A./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ã./pop))) +
-                    β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)))
+        # Z class to collect cumulative incidence (only from suspectibles NOT VACCINE) 
+        du[a+64] =  β*S[a]*(dot(M[a, :], Iₙ./pop) + dot(M[a, :], Iₕ./pop) + κ*dot(M[a, :], Aₙ./pop) + dot(M[a, :], (1 .- ξ).*(Ĩₙ./pop)) + dot(M[a, :], (1 .- ξ).*(Ĩₕ./pop)) + κ*dot(M[a, :], (1 .- ξ).*(Ãₙ./pop))) +
+                    β*S[a]*(dot(M̃[a, :], Qₙ./pop) + dot(M̃[a, :], Qₕ./pop) + κ*dot(M̃[a, :], Aₛ./pop) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₙ./pop)) + dot(M̃[a, :], (1 .- ξ).*(Q̃ₕ./pop)) + κ*dot(M̃[a, :], (1 .- ξ).*(Ãₛ./pop)))
         ## collect cumulative incidence of hospitalization and ICU class 69 to 84
-        du[a+68] = (1 - c[a])*δ*Iₕ[a] + (1 - c[a])*δ*Qₕ[a] + (1 - c̃[a])*δ*Ĩₕ[a] + (1 - c̃[a])*δ*Q̃ₕ[a]  
-        du[a+72] = c[a]*δ*Iₕ[a] + c[a]*δ*Qₕ[a] + c̃[a]*δ*Ĩₕ[a] + c̃[a]*δ*Q̃ₕ[a]  
+        du[a+68] = (1 - c[a])*(1 - fᵢ)*δ*Iₕ[a] + (1 - c[a])*δ*Qₕ[a] + (1 - c̃[a])*(1 - fᵢ)*δ*Ĩₕ[a] + (1 - c̃[a])*δ*Q̃ₕ[a]  
+        du[a+72] = c[a]*(1 - fᵢ)*δ*Iₕ[a] + c[a]*δ*Qₕ[a] + c̃[a]*(1 - fᵢ)*δ*Ĩₕ[a] + c̃[a]*δ*Q̃ₕ[a] 
         du[a+76] = (mH*μH)*H[a]  ## DX
         du[a+80] = (mC*μC)*C[a]  ## DY
 
@@ -189,11 +197,17 @@ function Model!(du, u, p, t)
         du[a+84] = ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*heaviside(S[a] + 1 - ν[a]) + ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a]))
 
         ## Asymptomatic classes -- top one is A, bottom is Ã
-        du[a+88] = θ[a]*σ*(F[a] + E[a]) - γ*A[a]
-        du[a+92] = θ[a]*σ*Ẽ[a] - γ*Ã[a]
+        # Aₙ₁, Aₙ₂, Aₙ₃, Aₙ₄,
+        du[a+88] = θ[a]*σ*(F[a] + E[a]) - (1 - fₐ)*γ*Aₙ[a] - fₐ*τₐ*Aₙ[a]        
+        # Aₛ₁, Aₛ₂, Aₛ₃, Aₛ₄, 
+        du[a+92] = fₐ*τₐ*Aₙ[a] - γ*Aₛ[a]       
+        # Ãₙ₁, Ãₙ₂, Ãₙ₃, Ãₙ₄,
+        du[a+96] = θ[a]*σ*Ẽ[a] - fₐ*τₐ*Ãₙ[a] - (1 - fₐ)*γ*Ãₙ[a] 
+        # Ãₛ₁, Ãₛ₂, Ãₛ₃, Ãₛ₄,
+        du[a+100] = fₐ*τₐ*Ãₙ[a] - γ*Ãₛ[a]         
     end
-    ## old 89
-    du[97] = σ*(F[1] + F[2] + F[3] + F[4])
+    ## wasted vac
+    du[105] = σ*(F[1] + F[2] + F[3] + F[4])
 end
 
 ## ODE callback fn for starting vaccination on specific day. 
@@ -221,8 +235,8 @@ cb = DiscreteCallback(condition, vaccine!, save_positions=(false,false))
 
 function run_model(p::ModelParameters, nsims=1)
     ## set up ODE time and initial conditions
-    tspan = (0.0, 500.0)
-    u0 = zeros(Float64, 97) ## total compartments
+    tspan = (0.0, 1000.0)
+    u0 = zeros(Float64, 105) ## total compartments
     sols = []    
     for mc = 1:nsims
         ## reset the initial conditions
@@ -262,9 +276,10 @@ function run_single()
     p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
     #p.strat = floor.( (0.70*p.pop[1], 0.70*p.pop[2], 0.30*p.pop[3], (evac-(0.7*p.pop[1]+0.7*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
     p.vstr = get_vaccine_start_time("2.0")
-    p.τ = 0.5
-    p.f = 0.05
-    p.f̃ = 0.05 
+    p.fₐ = 0.20
+    p.τₐ = 1 
+    p.fᵢ = 0.80
+    p.τᵢ = 1 
     dump(p)
     sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
     return sol
@@ -286,9 +301,8 @@ function run_scenarios()
         p.strat = floor.( (0.40*p.pop[1], 0.60*p.pop[2], 0.30*p.pop[3], (p.maxv-(0.4*p.pop[1]+0.6*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
         p.nva = v ## doses per week
         p.β = getβ(r)
-        p.τ = τ  
-        p.f = f
-        p.f̃ = f
+        p.τₐ = τ  
+        p.fₐ = f
         p.vstr = get_vaccine_start_time(r)
         fldrname = savestr(p);
         sols = run_model(p, 100)
@@ -418,8 +432,8 @@ function plots(sol)
     qclass = (q_n + q_h) #./ n
 
     # total asymptomatic 
-    totala = [getclass(i, sol) for i = 89:92]
-    totala_tilde = [getclass(i, sol) for i = 93:96]
+    totala = [getclass(i, sol) for i = 89:96]
+    totala_tilde = [getclass(i, sol) for i = 97:104]
 
     ## vaccinated in, ih, qn, qh
     i_n_tilde = sum([getclass(i, sol) for i = 37:40])
@@ -452,7 +466,7 @@ function plots(sol)
     totalvacF = sum([getclass(i, sol) for i = 9:12])   ## F class
     totalvac=totalvacV+totalvacF
     collectedvac = sum([getclass(i, sol) for i = 85:88]) 
-    wastedvac = getclass(89, sol)
+    wastedvac = getclass(105, sol)
 
     ## CHANGE in suspectibles, PER WEEK (used to calibrate the vaccine rate. not really needed anymore)
     sus = [getclass(i, sol) for i = 1:4]   ## susceptibles left
@@ -486,7 +500,7 @@ function plots(sol)
     p5 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])
     p6 = plot(sol.t, incidence, label="incidence")
 
-    p7 = plot(sol.t, totala, label="asymp")
+    p7 = plot(sol.t, totala, label="asymp", legend=false)
     p8 = plot(sol.t, [totalvac, collectedvac, wastedvac], label=["V+F" "Dv" "Wv"])
     p9 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
     #p5 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])

@@ -150,6 +150,7 @@ function Model!(du, u, p, t)
                    σ*E[a] - ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a]))  ## rate is multiplied by the proportion of E left (otherwise equal amounts of people are vaccinated in S and E)
         # F class: vaccinated, but exposed
         du[a+8] = -σ*F[a] + ν[a]*heaviside(Nᵥ[a] - Dᵥ[a])*(E[a]/(S[a]+E[a])) 
+
         # In class
         du[a+12] = (1 - θ[a])*(1 - q[a])*(1 - h[a])*σ*(E[a] + F[a]) - (1 - fᵢ)*γ*Iₙ[a] - fᵢ*τᵢ*Iₙ[a]
         # Qn class
@@ -246,12 +247,20 @@ function run_model(p::ModelParameters, nsims=1)
         u0[4] = u0[64] = p.pop[4]
         # initial infected person
         u0[13] = 1
+        u0[14] = 1
+        u0[15] = 1 
+        u0[16] = 1
+        #u0[17] = 1
+        #u0[21] = 1
+        #u0[25] = 1
 
         # sample the parameters needed per simulation
         p.ν = (0.0, 0.0, 0.0, 0.0)  ## reset vaccine rate. if vaccine is on, the integrator will properly set it based on nva.
         p.δ = 1/(rand(Uniform(2, 5)))
         p.σ = 1/(rand(LogNormal(log(5.2), 0.1)))     
-        p.h = (rand(Uniform(0.0085, 0.033)), rand(Uniform(0.0088, 0.034)), rand(Uniform(0.01, 0.042)), rand(Uniform(0.017, 0.066))) ./ (1 .- p.θ)
+        #p.h = (0.025, 0.32, 0.32, 0.64)
+        #p.c = (0.26, 0.25, 0.25, 0.25)
+        p.h = (rand(Uniform(0.02, 0.03)), rand(Uniform(0.28, 0.34)), rand(Uniform(0.28, 0.34)), rand(Uniform(0.60, 0.68)))
         p.c = (rand(Uniform(0.013, 0.015)), rand(Uniform(0.04, 0.044)), rand(Uniform(0.05, 0.1)), rand(Uniform(0.10, 0.20))) ## c dosnt change
         p.h̃ = @. (1 - p.ϵ) * p.h
         p.c̃ = @. (1 - p.ϵ) * p.c        
@@ -270,26 +279,24 @@ end
 function run_single()
     # A function that runs a single simulation for testing/calibrating purposes. 
     ## setup parameters (overwrite some default ones if needed)
+    println("new file")
     p = ModelParameters() 
-    p.β = getβ("2.0")
+    p.β = getβ("2.5")
     p.nva = 0 #5e6 #70#10e6#5e6
     p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
     #p.strat = floor.( (0.70*p.pop[1], 0.70*p.pop[2], 0.30*p.pop[3], (evac-(0.7*p.pop[1]+0.7*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
     p.vstr = get_vaccine_start_time("2.0")
-    p.fₐ = 0.20
-    p.τₐ = 1 
-    p.fᵢ = 0.80
-    p.τᵢ = 1 
+    p.fₐ = 0#0.20
+    p.τₐ = 0#1
     dump(p)
     sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
     return sol
 end
 
-
 function run_scenarios()
     ## setup parameters  (overwrite some default ones if needed)
     p = ModelParameters()   
-    R0s = ("2.0", )
+    R0s = ("2.5", )
     fs = (0.05, 0.1, 0.2)
     τs = (0.5, 1)  
     nvas = (0) #(0, 5e6)
@@ -310,13 +317,28 @@ function run_scenarios()
         next!(pr)
         savesims(sols, fldrname)
     end  
+    for r in R0s
+        #p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
+        p.strat = floor.( (0.40*p.pop[1], 0.60*p.pop[2], 0.30*p.pop[3], (p.maxv-(0.4*p.pop[1]+0.6*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
+        p.nva = 0 ## doses per week
+        p.β = getβ(r)
+        p.τₐ = 0
+        p.fₐ = 0
+        p.q = (0, 0, 0, 0)
+        p.vstr = get_vaccine_start_time(r)
+        fldrname = savestr(p);
+        sols = run_model(p, 100)
+        push!(ss, sols)
+        #next!(pr)
+        savesims(sols, fldrname)
+    end  
     return ss
 end
 
 function savestr(p::ModelParameters)
     ## setup folder name based on model parameters
-    taustr = replace(string(p.τ), "." => "")
-    fstr = replace(string(p.f), "." => "")
+    taustr = replace(string(p.τₐ), "." => "")
+    fstr = replace(string(p.fₐ), "." => "")
     rstr = replace(string(p.β), "." => "")
     vstr = replace(string(p.nva), "." => "")
     fldrname = "./b$rstr/v$vstr/tau$(taustr)_f$(fstr)/"
@@ -357,6 +379,32 @@ function getβ(str)
     else 
         error("no beta value for R0=$str")
     end
+
+    ## beta values for increasing kappa from 0.5 to 1.
+    # beta=[0.0492938461646810       0.0616173077058512
+    # 0.0464206589805987       0.0580258237257484
+    # 0.0438604901839047       0.0548256127298810
+    # 0.0415653813901300       0.0519567267376625
+    # 0.0394965839952802       0.0493707299941002
+    # 0.0376224765075566       0.0470280956344458
+    # 0.0359170151406399       0.0448962689257999
+    # 0.0343585672111056       0.0429482090138820
+    # 0.0329290227203686       0.0411612784004608
+    # 0.0316131105044555       0.0395163881305693
+    # 0.0303978665311045       0.0379973331638807];
+        
+    # kappa=[0.500000000000000
+    # 0.550000000000000
+    # 0.600000000000000
+    # 0.650000000000000
+    # 0.700000000000000
+    # 0.750000000000000
+    # 0.800000000000000
+    # 0.850000000000000
+    # 0.900000000000000
+    # 0.950000000000000
+    # 1];
+
 end
 
 function get_vaccine_start_time(str)
@@ -449,6 +497,7 @@ function plots(sol)
     ## prevalence of hospital/icu
     hosp = sum([getclass(i, sol) for i = 53:56])
     icu = sum([getclass(i, sol) for i = 57:60])
+    println("maximum ICU: $(maximum(icu))")
     total_hosp_icu = hosp + icu
     ratio_symp_hosp = total_hosp_icu ./ totali
 
@@ -497,14 +546,17 @@ function plots(sol)
     p3 = plot(sol.t, [e, ẽ], label=["exposed E" "exposed F"])
     p4 = plot(sol.t, [iclass, qclass], label=["i class" "q class"])
 
-    p5 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])
-    p6 = plot(sol.t, incidence, label="incidence")
+    #p5 = plot(sol.t, [iclass_tilde, qclass_tilde], label=["i class (vac)" "q class(vac)"])
+    #p6 = plot(sol.t, incidence, label="incidence")
+    #p5 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
+    p5 = plot(sol.t, [icu], label=["icu"])
+    p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
+    p6 = plot(sol.t, [cicu], label=["cicu"])
+    
 
     p7 = plot(sol.t, totala, label="asymp", legend=false)
     p8 = plot(sol.t, [totalvac, collectedvac, wastedvac], label=["V+F" "Dv" "Wv"])
     p9 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
-    #p5 = plot(sol.t, [hosp, icu], label=["hosp" "icu"])
-    #p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
     
     #p7 = plot(sol.t, ẽ, label=["e vac"])    
    

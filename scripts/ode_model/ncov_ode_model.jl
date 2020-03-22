@@ -41,7 +41,7 @@ heaviside(x) = x <= 0 ? 0 : 1
     mH::Float64 = 0.2296  ## prob of death in hospital
     μH::Float64 = 1/9.7   ## length of hospital stay before death (average of CDC reports)  
     ψH::Float64 = 1/10    ## length of hospital stay before recovery (JAMA paper, send PR to CDC GitHub jama paper is median)
-    mC::Float64 = 0.1396 ## prob of death in ICU 
+    mC::Float64 = 0.1396  ## prob of death in ICU 
     μC::Float64 = 1/7     ## length of ICU stay before death Lancet Res "Clinical course and outcomes of critically ill Yang"
     ψC::Float64 = 1/13.25 ## length of ICU before recovery (Chad's ventilation calculation)  
 
@@ -281,16 +281,20 @@ function run_single()
     ## setup parameters (overwrite some default ones if needed)
     println("new file")
     p = ModelParameters() 
-    p.β = getβ("2.5")
+    p.β = getβ("2.0")
+    p.fₐ = 0.24#0.20
+    p.τₐ = 1#1
+
     p.nva = 0 #5e6 #70#10e6#5e6
     p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
-    #p.strat = floor.( (0.70*p.pop[1], 0.70*p.pop[2], 0.30*p.pop[3], (evac-(0.7*p.pop[1]+0.7*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
-    p.vstr = get_vaccine_start_time("2.0")
-    p.fₐ = 0#0.20
-    p.τₐ = 0#1
+    p.vstr = get_vaccine_start_time("2.5")
+    
     dump(p)
-    sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
-    return sol
+    fldrname = savestr(p);
+    #sol = run_model(p, 1)[1] ## the [1] is required since runsims returns an array of solutions
+    sols = run_model(p, 100)
+    savesims(sols, fldrname)
+    return sols
 end
 
 function run_scenarios()
@@ -315,21 +319,6 @@ function run_scenarios()
         sols = run_model(p, 100)
         push!(ss, sols)
         next!(pr)
-        savesims(sols, fldrname)
-    end  
-    for r in R0s
-        #p.strat = floor.( (0.3*p.pop[1], (p.maxv-(0.3*p.pop[1]+0.7*p.pop[3]+0.7*p.pop[4])), 0.70*p.pop[3], 0.70*p.pop[4]) ) ## outcome based strategy
-        p.strat = floor.( (0.40*p.pop[1], 0.60*p.pop[2], 0.30*p.pop[3], (p.maxv-(0.4*p.pop[1]+0.6*p.pop[2]+0.3*p.pop[3]))) ) ## morbidity based strategy
-        p.nva = 0 ## doses per week
-        p.β = getβ(r)
-        p.τₐ = 0
-        p.fₐ = 0
-        p.q = (0, 0, 0, 0)
-        p.vstr = get_vaccine_start_time(r)
-        fldrname = savestr(p);
-        sols = run_model(p, 100)
-        push!(ss, sols)
-        #next!(pr)
         savesims(sols, fldrname)
     end  
     return ss
@@ -379,32 +368,6 @@ function getβ(str)
     else 
         error("no beta value for R0=$str")
     end
-
-    ## beta values for increasing kappa from 0.5 to 1.
-    # beta=[0.0492938461646810       0.0616173077058512
-    # 0.0464206589805987       0.0580258237257484
-    # 0.0438604901839047       0.0548256127298810
-    # 0.0415653813901300       0.0519567267376625
-    # 0.0394965839952802       0.0493707299941002
-    # 0.0376224765075566       0.0470280956344458
-    # 0.0359170151406399       0.0448962689257999
-    # 0.0343585672111056       0.0429482090138820
-    # 0.0329290227203686       0.0411612784004608
-    # 0.0316131105044555       0.0395163881305693
-    # 0.0303978665311045       0.0379973331638807];
-        
-    # kappa=[0.500000000000000
-    # 0.550000000000000
-    # 0.600000000000000
-    # 0.650000000000000
-    # 0.700000000000000
-    # 0.750000000000000
-    # 0.800000000000000
-    # 0.850000000000000
-    # 0.900000000000000
-    # 0.950000000000000
-    # 1];
-
 end
 
 function get_vaccine_start_time(str)
@@ -530,14 +493,12 @@ function plots(sol)
             ws[a, i] = sum(sinc[(7*i - 6):(7*i)])
         end
     end
-    # plotting the above.
-    # l = @layout [a b; c d]
-    # p1 = bar(1:nweek, ws[1, :], label="sus[1]")
-    # p2 = bar(1:nweek, ws[2, :], label="sus[2]")
-    # p3 = bar(1:nweek, ws[3, :], label="sus[3]")
-    # p4 = bar(1:nweek, ws[4, :], label="sus[4]")
-    # display(plot(p1, p2, p3, p4, layout = l, linewidth=3, size=(1000, 600)))    
+    
+    # total deaths per age group
+    #totalvacV = sum([getclass(i, sol) for i = 29:32])  ## this is V class. 
+    #[getclass(i, sol) for i = 9:12]
 
+    ## plot the above plots
     l = @layout [a b c; d e f; g h i]
     #p1 = plot(1:length(mean_inc), [prob, szv])
     p1 = plot(sol.t, s, label="susceptibles")
@@ -571,7 +532,7 @@ function plots(sol)
     #p9 = groupedbar(rand(10,3), bar_position = :dodge)
     #p6 = plot(sol.t, [chosp, cicu], label=["chosp" "cicu"])
     #p7 = plot(sol.t, ratio_symp_hosp, legend=false)
-   
+
     #Plots.scalefontsizes(0.1) #Or some other factor
     lp = plot(p1, p2, p3, p4, p5, p6, p7, p8, p9, layout = l, linewidth=3, size=(1000, 600))
     display(lp)
